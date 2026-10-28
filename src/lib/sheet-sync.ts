@@ -125,14 +125,14 @@ export function syncFromRowHeaders(
     if (existingBuiltIn && !assignedFieldIds.has(existingBuiltIn.id)) {
       assignedFieldIds.add(existingBuiltIn.id);
 
-      // If Google Sheets has explicit dropdown options for this column, adopt them
+      // If Google Sheets has explicit dropdown or native type (date, number, boolean) for this column, adopt them
       const updatedOptions = colRule?.options && colRule.options.length > 0
         ? colRule.options
         : existingBuiltIn.options;
 
       const updatedType = colRule?.options && colRule.options.length > 0
         ? 'select'
-        : existingBuiltIn.type;
+        : (colRule?.type || existingBuiltIn.type);
 
       fields.push({
         ...existingBuiltIn,

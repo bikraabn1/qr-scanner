@@ -95,6 +95,9 @@
 
   // Watch fields and keep form values initialized
   $effect(() => {
+    const todayIso = new Date().toISOString().split('T')[0];
+    const nowIso = new Date().toISOString().slice(0, 16);
+
     for (const f of activeFields) {
       if (formValues[f.id] === undefined) {
         if (f.id === 'pageNumber') {
@@ -103,6 +106,10 @@
           formValues[f.id] = f.defaultValue;
         } else if (f.type === 'boolean') {
           formValues[f.id] = false;
+        } else if (f.type === 'date') {
+          formValues[f.id] = todayIso;
+        } else if (f.type === 'datetime') {
+          formValues[f.id] = nowIso;
         } else {
           formValues[f.id] = '';
         }
@@ -118,11 +125,18 @@
   });
 
   function initDefaultValues() {
+    const todayIso = new Date().toISOString().split('T')[0];
+    const nowIso = new Date().toISOString().slice(0, 16);
+
     for (const f of activeFields) {
       if (f.id === 'pageNumber') {
         formValues[f.id] = appState.currentPage;
       } else if (f.defaultValue !== undefined) {
         formValues[f.id] = f.defaultValue;
+      } else if (f.type === 'date') {
+        formValues[f.id] = todayIso;
+      } else if (f.type === 'datetime') {
+        formValues[f.id] = nowIso;
       } else {
         formValues[f.id] = f.type === 'boolean' ? false : '';
       }
@@ -312,10 +326,17 @@
 
       startUndoCountdown(newRecord);
 
-      // Auto clear input fields (retain page number)
+      // Auto clear input fields (retain page number and today date)
+      const todayIso = new Date().toISOString().split('T')[0];
       for (const f of activeFields) {
         if (f.id !== 'pageNumber') {
-          formValues[f.id] = f.type === 'boolean' ? false : '';
+          if (f.type === 'boolean') {
+            formValues[f.id] = false;
+          } else if (f.type === 'date') {
+            formValues[f.id] = todayIso;
+          } else {
+            formValues[f.id] = '';
+          }
         }
       }
     } catch (err: unknown) {
@@ -399,6 +420,13 @@
             />
             <span>Centang jika valid / terkonfirmasi</span>
           </label>
+        {:else if field.type === 'date' || field.type === 'datetime'}
+          <input
+            id={`field-${field.id}`}
+            type={field.type === 'datetime' ? 'datetime-local' : 'date'}
+            bind:value={formValues[field.id]}
+            class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
+          />
         {:else}
           <!-- Input field with inline Camera icon button if it's a link/URL/QR column -->
           <div class="relative flex items-center">

@@ -1,4 +1,4 @@
-export type FieldType = 'text' | 'url' | 'number' | 'select' | 'boolean' | 'datetime' | 'longtext';
+export type FieldType = 'text' | 'url' | 'number' | 'select' | 'boolean' | 'date' | 'datetime' | 'longtext';
 
 export type SubmissionStatus = 
   | 'ready'

@@ -70,7 +70,7 @@ describe('Google Sheets Direct API Integration Layer', () => {
     expect(res.rowNumber).toBe(42);
 
     expect(fakeFetch).toHaveBeenCalledWith(
-      expect.stringContaining('https://sheets.googleapis.com/v4/spreadsheets/test-sheet-id-12345/values/Sheet1!A:append'),
+      expect.stringContaining("values/'Sheet1'!A%3AZ:append"),
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({

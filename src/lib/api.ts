@@ -44,6 +44,15 @@ export function buildSheetsRowArray(
 }
 
 /**
+ * Safely format an A1 notation range with sheet name quoting
+ * E.g. sheet "AH SHIIIIT" with range "A:Z" -> "'AH SHIIIIT'!A:Z"
+ */
+export function formatA1Range(sheetName: string, subRange: string): string {
+  const cleanSheet = sheetName.replace(/'/g, "''");
+  return `'${cleanSheet}'!${subRange}`;
+}
+
+/**
  * Submit record directly to Google Sheets via official REST API v4
  */
 export async function submitRecord(
@@ -70,7 +79,8 @@ export async function submitRecord(
   const rowArray = buildSheetsRowArray(record, fields, mappings);
 
   // Use OVERWRITE insertDataOption so preexisting cell validations, conditional formats, and empty row styles aren't shifted/distorted
-  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(sheetName)}!A:append?valueInputOption=USER_ENTERED&insertDataOption=OVERWRITE`;
+  const safeRange = formatA1Range(sheetName, 'A:Z');
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(safeRange)}:append?valueInputOption=USER_ENTERED&insertDataOption=OVERWRITE`;
 
   try {
     const controller = new AbortController();
@@ -216,7 +226,8 @@ export async function fetchSheetHeaders(
   const token = tokenOverride || appState.accessToken;
   if (!token) return [];
 
-  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}/values/${encodeURIComponent(cleanSheet)}!1:1?majorDimension=ROWS`;
+  const safeHeaderRange = formatA1Range(cleanSheet, '1:1');
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}/values/${encodeURIComponent(safeHeaderRange)}?majorDimension=ROWS`;
 
   try {
     const controller = new AbortController();
@@ -239,13 +250,14 @@ export async function fetchSheetHeaders(
 }
 
 /**
- * Fetch column Data Validation rules (dropdown options) from Google Sheets grid
+ * Fetch column Data Validation rules and official NumberFormats (Date, Number, etc)
+ * directly from Google Sheets grid metadata
  */
 export async function fetchSheetValidationRules(
   spreadsheetId: string,
   sheetName: string,
   tokenOverride?: string
-): Promise<Record<number, { options?: string[]; type?: import('./types').FieldType }>> {
+): Promise<Record<number, { options?: string[]; type?: import('./types').FieldType; numberPattern?: string }>> {
   const cleanId = spreadsheetId?.trim();
   const cleanSheet = sheetName?.trim();
   if (!cleanId || !cleanSheet) return {};
@@ -253,9 +265,9 @@ export async function fetchSheetValidationRules(
   const token = tokenOverride || appState.accessToken;
   if (!token) return {};
 
-  // Inspect Row 2 dataValidation (where user inputs or dropdowns are defined)
-  const range = `${encodeURIComponent(cleanSheet)}!A2:Z2`;
-  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}?ranges=${range}&fields=sheets(data(rowData(values(dataValidation))))`;
+  // Inspect Row 2 dataValidation and userEnteredFormat (numberFormat)
+  const safeRange = formatA1Range(cleanSheet, 'A2:Z2');
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}?ranges=${encodeURIComponent(safeRange)}&fields=sheets(data(rowData(values(dataValidation,userEnteredFormat/numberFormat))))`;
 
   try {
     const controller = new AbortController();
@@ -271,24 +283,45 @@ export async function fetchSheetValidationRules(
 
     const data = await response.json();
     const rowData = data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || [];
-    const rules: Record<number, { options?: string[]; type?: import('./types').FieldType }> = {};
+    const rules: Record<number, { options?: string[]; type?: import('./types').FieldType; numberPattern?: string }> = {};
 
     rowData.forEach((col: any, index: number) => {
       const valRule = col?.dataValidation;
-      if (!valRule) return;
+      const numFormat = col?.userEnteredFormat?.numberFormat;
 
-      const condition = valRule.condition;
-      if (condition?.type === 'ONE_OF_LIST' && Array.isArray(condition.values)) {
-        const options = condition.values
-          .map((v: any) => v?.userEnteredValue)
-          .filter((v: any) => v !== undefined && v !== null && String(v).trim().length > 0)
-          .map((v: any) => String(v).trim());
-
-        if (options.length > 0) {
-          rules[index] = { options, type: 'select' };
+      // 1. Check native NumberFormat from Google Sheets format
+      if (numFormat?.type) {
+        const nfType = String(numFormat.type).toUpperCase();
+        if (nfType === 'DATE') {
+          rules[index] = { type: 'date', numberPattern: numFormat.pattern };
+        } else if (nfType === 'DATE_TIME' || nfType === 'TIME') {
+          rules[index] = { type: 'datetime', numberPattern: numFormat.pattern };
+        } else if (nfType === 'NUMBER' || nfType === 'CURRENCY' || nfType === 'PERCENT') {
+          rules[index] = { type: 'number', numberPattern: numFormat.pattern };
         }
-      } else if (condition?.type === 'BOOLEAN') {
-        rules[index] = { type: 'boolean' };
+      }
+
+      // 2. Check Data Validation (takes precedence for Dropdowns or Date validation)
+      if (valRule?.condition) {
+        const condition = valRule.condition;
+        const condType = String(condition.type || '').toUpperCase();
+
+        if (condType === 'ONE_OF_LIST' && Array.isArray(condition.values)) {
+          const options = condition.values
+            .map((v: any) => v?.userEnteredValue)
+            .filter((v: any) => v !== undefined && v !== null && String(v).trim().length > 0)
+            .map((v: any) => String(v).trim());
+
+          if (options.length > 0) {
+            rules[index] = { options, type: 'select' };
+          }
+        } else if (condType.startsWith('DATE_')) {
+          rules[index] = { type: 'date' };
+        } else if (condType === 'BOOLEAN') {
+          rules[index] = { type: 'boolean' };
+        } else if (condType.startsWith('NUMBER_')) {
+          rules[index] = { type: 'number' };
+        }
       }
     });
 
@@ -314,7 +347,8 @@ export async function fetchSheetRows(
   const token = tokenOverride || appState.accessToken;
   if (!token) return { headers: [], rows: [] };
 
-  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}/values/${encodeURIComponent(cleanSheet)}!A1:Z${maxRows}?majorDimension=ROWS`;
+  const safeRange = formatA1Range(cleanSheet, `A1:Z${maxRows}`);
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}/values/${encodeURIComponent(safeRange)}?majorDimension=ROWS`;
 
   try {
     const controller = new AbortController();
