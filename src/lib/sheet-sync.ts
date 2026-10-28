@@ -1,0 +1,155 @@
+import type { ColumnMapping, FieldDefinition } from './types';
+import { columnIndexToLetter } from './utils';
+
+export interface SyncHeadersResult {
+  fields: FieldDefinition[];
+  mappings: ColumnMapping[];
+  matchedCount: number;
+  newFieldsCount: number;
+}
+
+/**
+ * Match a raw column header string to existing built-in or default fields
+ */
+export function identifyField(headerText: string): string | null {
+  const norm = headerText.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // 1. Page Number
+  if (
+    norm.includes('halaman') ||
+    norm.includes('page') ||
+    norm === 'hal' ||
+    norm === 'pg' ||
+    norm.includes('pagenum')
+  ) {
+    return 'pageNumber';
+  }
+
+  // 2. QR Content / Destination URL
+  if (
+    norm.includes('qr') ||
+    norm.includes('url') ||
+    norm.includes('link') ||
+    norm.includes('destinasi') ||
+    norm.includes('destination') ||
+    norm.includes('barcode')
+  ) {
+    return 'qrContent';
+  }
+
+  // 3. Test Verdict / Status
+  if (
+    norm.includes('status') ||
+    norm.includes('verdict') ||
+    norm.includes('hasil') ||
+    norm.includes('kondisi') ||
+    norm.includes('result')
+  ) {
+    return 'testStatus';
+  }
+
+  // 4. Notes / Remarks
+  if (
+    norm.includes('catatan') ||
+    norm.includes('note') ||
+    norm.includes('keterangan') ||
+    norm.includes('remark') ||
+    norm.includes('komentar') ||
+    norm.includes('comment')
+  ) {
+    return 'notes';
+  }
+
+  // 5. Timestamp / Scan Time
+  if (
+    norm.includes('waktu') ||
+    norm.includes('timestamp') ||
+    norm.includes('tanggal') ||
+    norm.includes('date') ||
+    norm.includes('time') ||
+    norm.includes('scanned')
+  ) {
+    return 'scannedAt';
+  }
+
+  return null;
+}
+
+/**
+ * Synchronize field definitions and column mappings from an array of Row 1 headers
+ */
+export function syncFromRowHeaders(
+  rawHeaders: (string | null | undefined)[],
+  currentFields: FieldDefinition[],
+  defaultMappings: ColumnMapping[]
+): SyncHeadersResult {
+  const headers = rawHeaders.map((h) => (h ? String(h).trim() : ''));
+  const hasContent = headers.some((h) => h.length > 0);
+
+  // If row 1 is completely blank, keep existing or default mappings
+  if (!hasContent) {
+    return {
+      fields: currentFields,
+      mappings: defaultMappings,
+      matchedCount: 0,
+      newFieldsCount: 0
+    };
+  }
+
+  const newMappings: ColumnMapping[] = [];
+  const assignedFieldIds = new Set<string>();
+  let matchedCount = 0;
+  let newFieldsCount = 0;
+
+  // When sheet has real header content, start with empty fields list (only keep matched built-ins or created custom fields)
+  const fields: FieldDefinition[] = [];
+
+  headers.forEach((header, index) => {
+    if (!header) return; // skip completely empty column
+    const colLetter = columnIndexToLetter(index + 1);
+
+    // Try matching to built-in field first
+    const matchedBuiltInId = identifyField(header);
+    const existingBuiltIn = currentFields.find((f) => f.id === matchedBuiltInId);
+
+    if (existingBuiltIn && !assignedFieldIds.has(existingBuiltIn.id)) {
+      assignedFieldIds.add(existingBuiltIn.id);
+      fields.push({
+        ...existingBuiltIn,
+        label: header // use actual header label from spreadsheet
+      });
+      newMappings.push({
+        fieldId: existingBuiltIn.id,
+        columnLetter: colLetter,
+        headerName: header
+      });
+      matchedCount++;
+    } else {
+      // Create custom field specifically for this spreadsheet column
+      const slug = 'custom_' + header.toLowerCase().replace(/[^a-z0-9]/g, '_');
+      const newField: FieldDefinition = {
+        id: slug + '_' + (index + 1),
+        label: header,
+        type: 'text',
+        required: false,
+        enabled: true,
+        isBuiltIn: false
+      };
+      fields.push(newField);
+      assignedFieldIds.add(newField.id);
+      newMappings.push({
+        fieldId: newField.id,
+        columnLetter: colLetter,
+        headerName: header
+      });
+      newFieldsCount++;
+    }
+  });
+
+  return {
+    fields,
+    mappings: newMappings,
+    matchedCount,
+    newFieldsCount
+  };
+}
