@@ -1,5 +1,6 @@
 import type { AppConfig, ColumnMapping, FieldDefinition, GoogleUser, QRRecord, TestStatus } from './types';
 import { generateRecordId } from './utils';
+import { getAuthSession, saveAuthSession, clearAuthSession } from './auth-cookie';
 
 const STORAGE_KEYS = {
   CONFIG: 'qr_book_tester_config_v2',
@@ -77,26 +78,40 @@ export class AppState {
   records = $state<QRRecord[]>(loadFromStorage(STORAGE_KEYS.RECORDS, []));
   theme = $state<'dark' | 'light'>(loadFromStorage(STORAGE_KEYS.THEME, 'dark'));
 
-  // OAuth Google Identity Session
-  user = $state<GoogleUser | null>(loadFromStorage(STORAGE_KEYS.AUTH_USER, null));
+  // OAuth Google Identity Session (Restored from Cookie if valid)
+  user = $state<GoogleUser | null>(null);
   accessToken = $state<string | null>(null);
 
   constructor() {
     if (typeof window !== 'undefined') {
       this.applyTheme(this.theme);
+      // Auto restore token & user from cookie or localStorage
+      const session = getAuthSession();
+      if (session) {
+        this.accessToken = session.token;
+        this.user = session.user || loadFromStorage(STORAGE_KEYS.AUTH_USER, null);
+      } else {
+        this.user = loadFromStorage(STORAGE_KEYS.AUTH_USER, null);
+      }
     }
   }
 
-  setAuth(user: GoogleUser | null, token: string | null) {
+  setAuth(user: GoogleUser | null, token: string | null, expiresInSeconds: number = 3500) {
     this.user = user;
     this.accessToken = token;
     saveToStorage(STORAGE_KEYS.AUTH_USER, user);
+    if (token) {
+      saveAuthSession(token, user, expiresInSeconds);
+    } else {
+      clearAuthSession();
+    }
   }
 
   signOut() {
     this.user = null;
     this.accessToken = null;
     saveToStorage(STORAGE_KEYS.AUTH_USER, null);
+    clearAuthSession();
   }
 
   saveConfig(newConfig: Partial<AppConfig>) {

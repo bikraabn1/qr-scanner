@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { appState } from './lib/store.svelte';
+  import { initAuthSession } from './lib/google-auth';
   import Header from './lib/components/Header.svelte';
   import PageTracker from './lib/components/PageTracker.svelte';
   import Workspace from './lib/components/Workspace.svelte';
@@ -17,6 +18,9 @@
     } else {
       document.documentElement.classList.remove('dark');
     }
+
+    // Attempt to restore session or silent refresh
+    initAuthSession().catch(() => {});
   });
 
   // Global keyboard shortcuts
