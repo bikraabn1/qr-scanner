@@ -24,10 +24,14 @@ test.describe('Take Redesign Screenshots', () => {
             window.localStorage.setItem('qr_book_tester_theme_v1', JSON.stringify('light'));
           });
         }
-        await page.reload();
 
-        // 1. Console View (with some sample data populated)
-        await page.getByRole('button', { name: 'QR-1' }).click();
+        // Authenticate session to access dashboard
+        await page.evaluate(() => {
+          // @ts-ignore
+          window.__appState?.setAuth({ email: 'tester@organization.com', name: 'Tester QA' }, 'mock-token');
+        });
+
+        // 1. Console View (Testing Input + Live Spreadsheet Preview)
         await page.screenshot({ path: `screenshots/${vp.name}-${theme}-console.png`, fullPage: true });
 
         // 2. Config View
