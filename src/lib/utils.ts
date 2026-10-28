@@ -60,29 +60,48 @@ export function isValidUrl(input: string): boolean {
 }
 
 /**
- * Extract a field's value from a QRRecord
+ * Extract and format a field's value from a QRRecord based on FieldDefinition type
  */
-export function getFieldValue(record: QRRecord, fieldId: string): string | number | boolean {
+export function getFieldValue(
+  record: QRRecord,
+  fieldId: string,
+  fieldDef?: FieldDefinition
+): string | number | boolean {
+  let raw: any;
   switch (fieldId) {
     case 'pageNumber':
-      return record.pageNumber;
+      raw = record.pageNumber;
+      break;
     case 'qrContent':
-      return record.qrContent;
+      raw = record.qrContent;
+      break;
     case 'testStatus':
-      return record.testStatus;
+      raw = record.testStatus;
+      break;
     case 'notes':
-      return record.notes;
+      raw = record.notes;
+      break;
     case 'scannedAt':
-      return record.scannedAt;
+      raw = record.scannedAt;
+      break;
     case 'recordId':
-      return record.recordId;
+      raw = record.recordId;
+      break;
     default:
-      return record.customFields?.[fieldId] ?? '';
+      raw = record.customFields?.[fieldId] ?? '';
+      break;
   }
+
+  // Format specifically if column is 'date' (YYYY-MM-DD) vs 'datetime'
+  if (fieldDef?.type === 'date' && typeof raw === 'string' && raw.includes('T')) {
+    return raw.split('T')[0];
+  }
+
+  return raw;
 }
 
 /**
- * Prepare mapped row payload for Google Apps Script
+ * Prepare mapped row payload for Google Sheets API
  * Returns a dictionary mapping column letters (e.g. "A", "C", "F") to cell values.
  */
 export function buildRowPayload(
@@ -99,7 +118,7 @@ export function buildRowPayload(
     const field = fields.find((f) => f.id === mapping.fieldId);
     if (!field || !field.enabled) continue;
 
-    const val = getFieldValue(record, mapping.fieldId);
+    const val = getFieldValue(record, mapping.fieldId, field);
     payload[col] = val;
   }
 

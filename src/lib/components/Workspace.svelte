@@ -298,7 +298,7 @@
       qrContent: String(formValues['qrContent'] || formValues[activeFields[0]?.id] || '').trim(),
       testStatus: (formValues['testStatus'] || 'PASS') as TestStatus,
       notes: String(formValues['notes'] || '').trim(),
-      scannedAt: new Date().toISOString(),
+      scannedAt: formValues['scannedAt'] ? String(formValues['scannedAt']) : new Date().toISOString(),
       customFields: customData,
       submissionStatus: 'saving'
     };
