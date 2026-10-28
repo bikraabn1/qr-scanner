@@ -24,7 +24,9 @@
   let formValues = $state<Record<string, any>>({});
 
   let isSubmitting = $state(false);
-  let isCameraOpen = $state(false);
+
+  // Per-field inline camera state
+  let scanningFieldId = $state<string | null>(null);
   let isStartingCamera = $state(false);
   let cameraError = $state<string | null>(null);
   let html5QrCodeInstance: any = null;
@@ -53,9 +55,23 @@
     { label: 'Audio MP3', url: 'https://podcast.org/episode-1.mp3' }
   ];
 
-  // Derived current QR value if qrContent field exists
-  let currentQrValue = $derived(String(formValues['qrContent'] || ''));
-  let parsed = $derived(parseDestination(currentQrValue));
+  /**
+   * Helper to detect whether a column represents a link/URL/destination
+   */
+  function isLinkField(field: { id: string; label: string; type: string }): boolean {
+    if (field.type === 'url') return true;
+    const norm = (field.label + ' ' + field.id).toLowerCase();
+    return (
+      norm.includes('link') ||
+      norm.includes('url') ||
+      norm.includes('qr') ||
+      norm.includes('destinasi') ||
+      norm.includes('destination') ||
+      norm.includes('barcode') ||
+      norm.includes('tautan') ||
+      norm.includes('web')
+    );
+  }
 
   // Validation
   let disabledReason = $derived.by(() => {
@@ -165,32 +181,35 @@
     feedback = { type: 'warning', message: 'Input dikembalikan ke form (Data di sheet tetap terisi).' };
   }
 
-  async function toggleCamera() {
-    if (isCameraOpen) {
+  async function toggleCameraForField(fieldId: string) {
+    if (scanningFieldId === fieldId) {
       stopCamera();
     } else {
-      await startCamera();
+      if (scanningFieldId) {
+        stopCamera();
+      }
+      await startCamera(fieldId);
     }
   }
 
-  async function startCamera() {
+  async function startCamera(fieldId: string) {
     cameraError = null;
     isStartingCamera = true;
+    scanningFieldId = fieldId;
 
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Kamera tidak didukung oleh browser Anda.');
       }
 
-      isCameraOpen = true;
       await new Promise((r) => setTimeout(r, 80));
 
       const { Html5Qrcode } = await import('html5-qrcode');
-      html5QrCodeInstance = new Html5Qrcode('qr-viewfinder');
+      html5QrCodeInstance = new Html5Qrcode(`qr-viewfinder-${fieldId}`);
 
       const config = {
         fps: 15,
-        qrbox: { width: 220, height: 220 },
+        qrbox: { width: 200, height: 200 },
         aspectRatio: 1.0
       };
 
@@ -198,20 +217,20 @@
         await html5QrCodeInstance.start(
           { facingMode: 'environment' },
           config,
-          onScanSuccess,
+          (decodedText: string) => onScanSuccess(fieldId, decodedText),
           () => {}
         );
       } catch {
         await html5QrCodeInstance.start(
           { facingMode: 'user' },
           config,
-          onScanSuccess,
+          (decodedText: string) => onScanSuccess(fieldId, decodedText),
           () => {}
         );
       }
     } catch (err: unknown) {
       cameraError = err instanceof Error ? err.message : 'Izin kamera ditolak';
-      isCameraOpen = false;
+      scanningFieldId = null;
     } finally {
       isStartingCamera = false;
     }
@@ -225,10 +244,10 @@
       } catch (_) {}
       html5QrCodeInstance = null;
     }
-    isCameraOpen = false;
+    scanningFieldId = null;
   }
 
-  function onScanSuccess(decodedText: string) {
+  function onScanSuccess(fieldId: string, decodedText: string) {
     if (isThrottled) return;
     isThrottled = true;
     frameFlashed = true;
@@ -237,11 +256,8 @@
       playScanBeep();
     }
 
-    // Set into qrContent field if available, or first text/url field
-    const qrField = activeFields.find((f) => f.id === 'qrContent' || f.type === 'url') || activeFields[0];
-    if (qrField) {
-      formValues[qrField.id] = decodedText.trim();
-    }
+    // Set value into the specifically targeted field
+    formValues[fieldId] = decodedText.trim();
 
     setTimeout(() => { frameFlashed = false; }, 350);
     setTimeout(() => { isThrottled = false; }, 1500);
@@ -322,7 +338,7 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-5 shadow-2xs space-y-4 transition-colors">
-  <!-- Top bar: Camera toggle & sample shortcuts -->
+  <!-- Top bar -->
   <div class="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
     <div class="flex items-center gap-2">
       <span class="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100 font-mono-data">
@@ -332,51 +348,17 @@
         ({activeFields.length} kolom aktif)
       </span>
     </div>
-
-    <!-- Camera Trigger -->
-    <button
-      type="button"
-      class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-sm border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 transition-colors shadow-2xs cursor-pointer"
-      onclick={toggleCamera}
-      disabled={isStartingCamera}
-    >
-      {#if isCameraOpen}
-        <CameraOff class="w-3.5 h-3.5 text-red-500" />
-        <span>Tutup Kamera</span>
-      {:else}
-        <Camera class="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-300" />
-        <span>Scan QR</span>
-      {/if}
-    </button>
   </div>
 
-  <!-- Camera Viewfinder Overlay -->
-  {#if isCameraOpen}
-    <div class="relative overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700 bg-black min-h-[220px] flex items-center justify-center">
-      <div id="qr-viewfinder" class="w-full max-w-sm"></div>
-      <div class="absolute inset-0 pointer-events-none flex items-center justify-center">
-        <div class="w-48 h-48 rounded-md border-2 transition-colors duration-150 {frameFlashed ? 'border-emerald-500 bg-emerald-500/20' : 'border-zinc-100/60 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]'}">
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  {#if cameraError}
-    <div class="p-2 text-xs text-red-600 dark:text-red-400 bg-red-500/10 rounded-sm border border-red-500/20">
-      {cameraError}
-    </div>
-  {/if}
-
-  <!-- Media Preview if URL is present -->
-  {#if currentQrValue.trim()}
-    <MediaPreview {parsed} />
-  {/if}
-
   <!-- Pure Dynamic Form Fields (100% In Sync with Config & Sheet Columns) -->
-  <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-3.5">
+  <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-4">
     {#each activeFields as field, idx}
       {@const mapping = appState.mappings.find((m) => m.fieldId === field.id)}
-      <div class="space-y-1">
+      {@const isLink = isLinkField(field)}
+      {@const fieldValue = String(formValues[field.id] || '')}
+      {@const fieldParsed = isLink && fieldValue.trim() ? parseDestination(fieldValue) : null}
+
+      <div class="space-y-1.5">
         <div class="flex items-center justify-between">
           <label for={`field-${field.id}`} class="block text-xs font-semibold text-zinc-800 dark:text-zinc-200">
             {field.label}
@@ -418,7 +400,8 @@
             <span>Centang jika valid / terkonfirmasi</span>
           </label>
         {:else}
-          <div class="relative">
+          <!-- Input field with inline Camera icon button if it's a link/URL/QR column -->
+          <div class="relative flex items-center">
             {#if idx === 0}
               <input
                 id={`field-${field.id}`}
@@ -426,7 +409,7 @@
                 bind:this={firstInputRef}
                 bind:value={formValues[field.id]}
                 placeholder={`Ketik ${field.label.toLowerCase()}...`}
-                class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
+                class="w-full font-mono-data text-xs py-2 pl-3 {isLink ? 'pr-9' : 'pr-3'} rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
               />
             {:else}
               <input
@@ -434,24 +417,65 @@
                 type={field.type === 'number' ? 'number' : field.type === 'url' ? 'url' : 'text'}
                 bind:value={formValues[field.id]}
                 placeholder={`Ketik ${field.label.toLowerCase()}...`}
-                class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
+                class="w-full font-mono-data text-xs py-2 pl-3 {isLink ? 'pr-9' : 'pr-3'} rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
               />
             {/if}
-            {#if field.id === 'qrContent' && !formValues['qrContent']}
-              <div class="flex items-center gap-1.5 mt-1">
-                <span class="text-[10px] text-zinc-400">Sample:</span>
-                {#each SAMPLE_QRS as sample}
-                  <button
-                    type="button"
-                    class="text-[10px] font-mono-data text-blue-600 dark:text-blue-400 hover:underline"
-                    onclick={() => formValues['qrContent'] = sample.url}
-                  >
-                    {sample.label}
-                  </button>
-                {/each}
-              </div>
+
+            <!-- Inline Camera Action Button for link/URL columns -->
+            {#if isLink}
+              <button
+                type="button"
+                class="absolute right-1.5 p-1 rounded-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                title={`Scan QR langsung ke kolom ${field.label}`}
+                onclick={() => toggleCameraForField(field.id)}
+              >
+                {#if scanningFieldId === field.id}
+                  <CameraOff class="w-3.5 h-3.5 text-red-500" />
+                {:else}
+                  <Camera class="w-3.5 h-3.5" />
+                {/if}
+              </button>
             {/if}
           </div>
+
+          <!-- Sample Links for quick testing on QR / link columns -->
+          {#if isLink && !formValues[field.id]}
+            <div class="flex items-center gap-1.5 mt-1">
+              <span class="text-[10px] text-zinc-400">Sample:</span>
+              {#each SAMPLE_QRS as sample}
+                <button
+                  type="button"
+                  class="text-[10px] font-mono-data text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                  onclick={() => formValues[field.id] = sample.url}
+                >
+                  {sample.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
+
+          <!-- Contextual Inline Viewfinder for this specific field -->
+          {#if scanningFieldId === field.id}
+            <div class="mt-2 relative overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700 bg-black min-h-[200px] flex items-center justify-center">
+              <div id={`qr-viewfinder-${field.id}`} class="w-full max-w-xs"></div>
+              <div class="absolute inset-0 pointer-events-none flex items-center justify-center">
+                <div class="w-40 h-40 rounded-md border-2 transition-colors duration-150 {frameFlashed ? 'border-emerald-500 bg-emerald-500/20' : 'border-zinc-100/60 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]'}">
+                </div>
+              </div>
+            </div>
+            {#if cameraError}
+              <div class="p-2 text-xs text-red-600 dark:text-red-400 bg-red-500/10 rounded-sm border border-red-500/20">
+                {cameraError}
+              </div>
+            {/if}
+          {/if}
+
+          <!-- Automatic Media Preview specifically for this link field -->
+          {#if fieldParsed}
+            <div class="mt-2">
+              <MediaPreview parsed={fieldParsed} />
+            </div>
+          {/if}
         {/if}
       </div>
     {/each}
