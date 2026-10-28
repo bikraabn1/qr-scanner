@@ -59,4 +59,19 @@ describe('Sheet Header Synchronization', () => {
     expect(pengujiField).toBeDefined();
     expect(pengujiField?.isBuiltIn).toBe(false);
   });
+
+  it('adopts fetched Google Sheets Data Validation dropdown options for matching columns', () => {
+    const rowHeaders = ['Page', 'URL', 'Status Hasil'];
+    const validationRules = {
+      2: { options: ['Cocok', 'Tidak Cocok'], type: 'select' as const }
+    };
+
+    const res = syncFromRowHeaders(rowHeaders, baseFields, defaultMappings, validationRules);
+    const statusField = res.fields.find((f) => f.id === 'testStatus');
+
+    expect(statusField).toBeDefined();
+    expect(statusField?.type).toBe('select');
+    expect(statusField?.options).toEqual(['Cocok', 'Tidak Cocok']);
+    expect(statusField?.defaultValue).toBe('Cocok');
+  });
 });

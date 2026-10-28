@@ -239,6 +239,66 @@ export async function fetchSheetHeaders(
 }
 
 /**
+ * Fetch column Data Validation rules (dropdown options) from Google Sheets grid
+ */
+export async function fetchSheetValidationRules(
+  spreadsheetId: string,
+  sheetName: string,
+  tokenOverride?: string
+): Promise<Record<number, { options?: string[]; type?: import('./types').FieldType }>> {
+  const cleanId = spreadsheetId?.trim();
+  const cleanSheet = sheetName?.trim();
+  if (!cleanId || !cleanSheet) return {};
+
+  const token = tokenOverride || appState.accessToken;
+  if (!token) return {};
+
+  // Inspect Row 2 dataValidation (where user inputs or dropdowns are defined)
+  const range = `${encodeURIComponent(cleanSheet)}!A2:Z2`;
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}?ranges=${range}&fields=sheets(data(rowData(values(dataValidation))))`;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) return {};
+
+    const data = await response.json();
+    const rowData = data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || [];
+    const rules: Record<number, { options?: string[]; type?: import('./types').FieldType }> = {};
+
+    rowData.forEach((col: any, index: number) => {
+      const valRule = col?.dataValidation;
+      if (!valRule) return;
+
+      const condition = valRule.condition;
+      if (condition?.type === 'ONE_OF_LIST' && Array.isArray(condition.values)) {
+        const options = condition.values
+          .map((v: any) => v?.userEnteredValue)
+          .filter((v: any) => v !== undefined && v !== null && String(v).trim().length > 0)
+          .map((v: any) => String(v).trim());
+
+        if (options.length > 0) {
+          rules[index] = { options, type: 'select' };
+        }
+      } else if (condition?.type === 'BOOLEAN') {
+        rules[index] = { type: 'boolean' };
+      }
+    });
+
+    return rules;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Fetch rows from the worksheet tab for live preview
  */
 export async function fetchSheetRows(

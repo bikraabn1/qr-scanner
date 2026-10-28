@@ -1,5 +1,11 @@
-import type { ColumnMapping, FieldDefinition } from './types';
+import type { ColumnMapping, FieldDefinition, FieldType } from './types';
 import { columnIndexToLetter } from './utils';
+
+export interface ColumnValidationRule {
+  columnIndex: number; // 0-based
+  options?: string[];
+  type?: FieldType;
+}
 
 export interface SyncHeadersResult {
   fields: FieldDefinition[];
@@ -43,7 +49,8 @@ export function identifyField(headerText: string): string | null {
     norm.includes('verdict') ||
     norm.includes('hasil') ||
     norm.includes('kondisi') ||
-    norm.includes('result')
+    norm.includes('result') ||
+    norm.includes('kesimpulan')
   ) {
     return 'testStatus';
   }
@@ -77,11 +84,13 @@ export function identifyField(headerText: string): string | null {
 
 /**
  * Synchronize field definitions and column mappings from an array of Row 1 headers
+ * and optionally extracted column validation rules (dropdown options from Google Sheets)
  */
 export function syncFromRowHeaders(
   rawHeaders: (string | null | undefined)[],
   currentFields: FieldDefinition[],
-  defaultMappings: ColumnMapping[]
+  defaultMappings: ColumnMapping[],
+  validationRules?: Record<number, { options?: string[]; type?: FieldType }>
 ): SyncHeadersResult {
   const headers = rawHeaders.map((h) => (h ? String(h).trim() : ''));
   const hasContent = headers.some((h) => h.length > 0);
@@ -107,6 +116,7 @@ export function syncFromRowHeaders(
   headers.forEach((header, index) => {
     if (!header) return; // skip completely empty column
     const colLetter = columnIndexToLetter(index + 1);
+    const colRule = validationRules ? validationRules[index] : undefined;
 
     // Try matching to built-in field first
     const matchedBuiltInId = identifyField(header);
@@ -114,9 +124,22 @@ export function syncFromRowHeaders(
 
     if (existingBuiltIn && !assignedFieldIds.has(existingBuiltIn.id)) {
       assignedFieldIds.add(existingBuiltIn.id);
+
+      // If Google Sheets has explicit dropdown options for this column, adopt them
+      const updatedOptions = colRule?.options && colRule.options.length > 0
+        ? colRule.options
+        : existingBuiltIn.options;
+
+      const updatedType = colRule?.options && colRule.options.length > 0
+        ? 'select'
+        : existingBuiltIn.type;
+
       fields.push({
         ...existingBuiltIn,
-        label: header // use actual header label from spreadsheet
+        label: header, // use actual header label from spreadsheet
+        type: updatedType,
+        options: updatedOptions,
+        defaultValue: updatedOptions && updatedOptions.length > 0 ? updatedOptions[0] : existingBuiltIn.defaultValue
       });
       newMappings.push({
         fieldId: existingBuiltIn.id,
@@ -127,10 +150,14 @@ export function syncFromRowHeaders(
     } else {
       // Create custom field specifically for this spreadsheet column
       const slug = 'custom_' + header.toLowerCase().replace(/[^a-z0-9]/g, '_');
+      const hasDropdown = colRule?.options && colRule.options.length > 0;
+
       const newField: FieldDefinition = {
         id: slug + '_' + (index + 1),
         label: header,
-        type: 'text',
+        type: hasDropdown ? 'select' : (colRule?.type || 'text'),
+        options: hasDropdown ? colRule!.options : undefined,
+        defaultValue: hasDropdown && colRule!.options ? colRule!.options[0] : undefined,
         required: false,
         enabled: true,
         isBuiltIn: false

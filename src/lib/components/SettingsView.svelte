@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { appState } from '../store.svelte';
-  import { pingGoogleSheets, fetchSpreadsheetMetadata, fetchSheetHeaders } from '../api';
+  import { pingGoogleSheets, fetchSpreadsheetMetadata, fetchSheetHeaders, fetchSheetValidationRules } from '../api';
   import { isValidColumnLetter } from '../utils';
   import { requestGoogleAccessToken } from '../google-auth';
   import { syncFromRowHeaders } from '../sheet-sync';
@@ -145,13 +145,18 @@
     syncHeadersNotice = null;
 
     try {
-      const headers = await fetchSheetHeaders(id, selectedSheet);
+      const [headers, rules] = await Promise.all([
+        fetchSheetHeaders(id, selectedSheet),
+        fetchSheetValidationRules(id, selectedSheet)
+      ]);
+
       if (headers && headers.length > 0) {
-        const result = syncFromRowHeaders(headers, appState.fields, appState.mappings);
+        const result = syncFromRowHeaders(headers, appState.fields, appState.mappings, rules);
         appState.saveFields(result.fields);
         appState.saveMappings(result.mappings);
         triggerSavedBadge();
-        syncHeadersNotice = `Otomatis sinkron ${result.matchedCount} kolom dari Row 1 tab "${selectedSheet}".`;
+        const dropdownCount = Object.keys(rules).length;
+        syncHeadersNotice = `Otomatis sinkron ${result.matchedCount} kolom (${dropdownCount > 0 ? `${dropdownCount} dropdown ditarik` : 'tanpa dropdown'}) dari tab "${selectedSheet}".`;
       } else {
         syncHeadersNotice = `Tab "${selectedSheet}" baris 1 kosong. Menggunakan mapping standar.`;
       }
