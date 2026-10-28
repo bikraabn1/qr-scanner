@@ -28,9 +28,15 @@ export interface ColumnMapping {
 
 export type WriteStrategy = 'append' | 'update';
 
+export interface GoogleUser {
+  email: string;
+  name: string;
+  picture?: string;
+}
+
 export interface AppConfig {
-  dummyMode: boolean;
-  scriptUrl: string; // Google Apps Script Web App URL
+  clientId: string; // Google OAuth 2.0 Web Client ID
+  spreadsheetId: string; // Google Spreadsheet ID
   sheetName: string; // Target worksheet/tab name
   writeStrategy: WriteStrategy;
   updateKeyFieldId: string; // composite/unique key if update mode

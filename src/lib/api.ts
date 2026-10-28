@@ -1,133 +1,304 @@
 import type { AppConfig, ColumnMapping, FieldDefinition, QRRecord } from './types';
-import { buildRowPayload } from './utils';
+import { buildRowPayload, columnLetterToIndex } from './utils';
+import { appState } from './store.svelte';
 
 export interface SubmitResult {
   success: boolean;
-  simulated?: boolean;
   message?: string;
   rowNumber?: number;
 }
 
+/**
+ * Convert column-mapped dictionary into a 0-indexed row array for Google Sheets API values.append
+ */
+export function buildSheetsRowArray(
+  record: QRRecord,
+  fields: FieldDefinition[],
+  mappings: ColumnMapping[]
+): (string | number | boolean)[] {
+  const columnMap = buildRowPayload(record, fields, mappings);
+  let maxColIndex = 0;
+
+  for (const colLetter of Object.keys(columnMap)) {
+    try {
+      const idx = columnLetterToIndex(colLetter);
+      if (idx > maxColIndex) maxColIndex = idx;
+    } catch {
+      // skip invalid column
+    }
+  }
+
+  if (maxColIndex === 0) return [];
+
+  const row: (string | number | boolean)[] = new Array(maxColIndex).fill('');
+  for (const [colLetter, val] of Object.entries(columnMap)) {
+    try {
+      const idx = columnLetterToIndex(colLetter) - 1; // 0-based
+      row[idx] = val;
+    } catch {
+      // skip
+    }
+  }
+
+  return row;
+}
+
+/**
+ * Submit record directly to Google Sheets via official REST API v4
+ */
 export async function submitRecord(
   record: QRRecord,
   config: AppConfig,
   fields: FieldDefinition[],
-  mappings: ColumnMapping[]
+  mappings: ColumnMapping[],
+  tokenOverride?: string
 ): Promise<SubmitResult> {
-  // Dummy mode fallback (FR-10)
-  if (config.dummyMode) {
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    return {
-      success: true,
-      simulated: true,
-      message: 'Simulated submission successful (Dummy Mode)'
-    };
+  const spreadsheetId = config.spreadsheetId?.trim();
+  if (!spreadsheetId) {
+    throw new Error('Spreadsheet ID belum diisi. Masukkan di tab Config atau file .env');
   }
 
-  if (!config.scriptUrl || !config.scriptUrl.trim()) {
-    throw new Error('Google Apps Script Web App URL is not configured. Please set it in Settings.');
+  const token = tokenOverride || appState.accessToken;
+  if (!token) {
+    throw new Error('Belum login Google. Silakan klik "Sign in with Google" di pojok kanan atas.');
   }
 
-  const rowPayload = buildRowPayload(record, fields, mappings);
+  const sheetName = config.sheetName?.trim();
+  if (!sheetName) {
+    throw new Error('Tab Sheet belum dipilih. Silakan pilih tab di tab Config.');
+  }
+  const rowArray = buildSheetsRowArray(record, fields, mappings);
 
-  const requestBody = {
-    action: 'writeRecord',
-    strategy: config.writeStrategy || 'append',
-    sheetName: config.sheetName || 'Sheet1',
-    recordId: record.recordId,
-    updateKey: config.updateKeyFieldId || 'qrContent',
-    columns: rowPayload,
-    metadata: {
-      pageNumber: record.pageNumber,
-      qrContent: record.qrContent,
-      testStatus: record.testStatus,
-      scannedAt: record.scannedAt
-    }
-  };
+  // Use OVERWRITE insertDataOption so preexisting cell validations, conditional formats, and empty row styles aren't shifted/distorted
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(sheetName)}!A:append?valueInputOption=USER_ENTERED&insertDataOption=OVERWRITE`;
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(config.scriptUrl.trim(), {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'Content-Type': 'text/plain;charset=utf-8' // Text plain prevents CORS preflight issues with Google Apps Script
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify(requestBody),
-      redirect: 'follow',
+      body: JSON.stringify({
+        values: [rowArray]
+      }),
       signal: controller.signal
     });
 
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      throw new Error(`Google Apps Script responded with HTTP ${response.status}: ${response.statusText}`);
+      if (response.status === 401) {
+        appState.signOut();
+        throw new Error('Sesi login Google telah kedaluwarsa. Silakan Sign in with Google ulang.');
+      }
+      if (response.status === 403) {
+        throw new Error(
+          `Akses Spreadsheet ditolak (403 Forbidden). Pastikan akun Google Anda (${appState.user?.email || 'tester'}) sudah di-share hak akses "Editor" pada Google Spreadsheet tersebut.`
+        );
+      }
+      if (response.status === 404) {
+        throw new Error(`Spreadsheet tidak ditemukan (404). Periksa kembali Spreadsheet ID: "${spreadsheetId}".`);
+      }
+
+      const errText = await response.text();
+      throw new Error(`Google Sheets API Error (${response.status}): ${errText}`);
     }
 
     const data = await response.json();
+    const updatedRange = data.updates?.updatedRange || '';
+    const match = updatedRange.match(/!.*?([0-9]+):/);
+    const rowNumber = match ? parseInt(match[1], 10) : undefined;
 
-    if (data.status === 'success' || data.success === true) {
-      return {
-        success: true,
-        message: data.message || 'Row written successfully',
-        rowNumber: data.row || data.rowNumber
-      };
-    } else {
-      throw new Error(data.message || data.error || 'Google Apps Script reported an error');
-    }
+    return {
+      success: true,
+      message: `Tersimpan ke Google Sheets: ${updatedRange || 'berhasil'}`,
+      rowNumber
+    };
   } catch (err: unknown) {
     if (err instanceof Error) {
       if (err.name === 'AbortError') {
-        throw new Error('Request timed out after 15 seconds. Submission outcome is unknown.');
+        throw new Error('Koneksi ke Google Sheets timed out (15s). Cek internet Anda.');
       }
       throw err;
     }
-    throw new Error('Failed to connect to Google Apps Script endpoint');
+    throw new Error('Gagal menghubungi Google Sheets API.');
   }
 }
 
 export const retryFailedRecord = submitRecord;
 
-export async function pingGoogleSheets(scriptUrl: string, sheetName: string): Promise<SubmitResult> {
-  if (!scriptUrl || !scriptUrl.trim()) {
-    throw new Error('Google Apps Script URL is required');
+export interface SpreadsheetMetadata {
+  title: string;
+  sheetNames: string[];
+}
+
+/**
+ * Fetch spreadsheet title and all available sheet tabs
+ */
+export async function fetchSpreadsheetMetadata(
+  spreadsheetId: string,
+  tokenOverride?: string
+): Promise<SpreadsheetMetadata> {
+  const cleanId = spreadsheetId?.trim();
+  if (!cleanId) {
+    throw new Error('Spreadsheet ID wajib diisi');
   }
 
-  const requestBody = {
-    action: 'ping',
-    sheetName: sheetName || 'Sheet1'
-  };
+  const token = tokenOverride || appState.accessToken;
+  if (!token) {
+    throw new Error('Belum login. Silakan Sign in with Google terlebih dahulu.');
+  }
+
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}?fields=properties.title,sheets.properties.title`;
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(scriptUrl.trim(), {
-      method: 'POST',
+    const response = await fetch(endpoint, {
       headers: {
-        'Content-Type': 'text/plain;charset=utf-8'
+        Authorization: `Bearer ${token}`
       },
-      body: JSON.stringify(requestBody),
-      redirect: 'follow',
       signal: controller.signal
     });
 
     clearTimeout(timeoutId);
 
-    const data = await response.json();
-    if (data.status === 'success' || data.success === true) {
-      return {
-        success: true,
-        message: data.message || `Connected to sheet "${sheetName}"`
-      };
-    } else {
-      throw new Error(data.message || 'Spreadsheet ping returned an error');
+    if (!response.ok) {
+      if (response.status === 401) {
+        appState.signOut();
+        throw new Error('Sesi login Google kedaluwarsa. Sign in ulang.');
+      }
+      if (response.status === 403) {
+        throw new Error(`Akses ditolak (403). Akun ${appState.user?.email || 'Google Anda'} belum diberi izin Editor di Spreadsheet ini.`);
+      }
+      if (response.status === 404) {
+        throw new Error('Spreadsheet ID tidak ditemukan di Google Drive.');
+      }
+      const errText = await response.text();
+      throw new Error(`Gagal akses spreadsheet (${response.status}): ${errText}`);
     }
+
+    const data = await response.json();
+    const title = data.properties?.title || 'Spreadsheet';
+    const sheetNames = (data.sheets || [])
+      .map((s: any) => s.properties?.title)
+      .filter(Boolean);
+
+    return { title, sheetNames };
   } catch (err: unknown) {
     if (err instanceof Error) {
+      if (err.name === 'AbortError') {
+        throw new Error('Koneksi ke Google Sheets timed out (10s).');
+      }
       throw err;
     }
-    throw new Error('Could not reach Google Apps Script');
+    throw new Error('Gagal memeriksa Spreadsheet.');
   }
+}
+
+/**
+ * Fetch Row 1 headers from the selected worksheet tab
+ */
+export async function fetchSheetHeaders(
+  spreadsheetId: string,
+  sheetName: string,
+  tokenOverride?: string
+): Promise<string[]> {
+  const cleanId = spreadsheetId?.trim();
+  const cleanSheet = sheetName?.trim();
+  if (!cleanId || !cleanSheet) return [];
+
+  const token = tokenOverride || appState.accessToken;
+  if (!token) return [];
+
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}/values/${encodeURIComponent(cleanSheet)}!1:1?majorDimension=ROWS`;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) return [];
+
+    const data = await response.json();
+    const rowValues = data.values?.[0] || [];
+    return rowValues.map((v: any) => (v !== undefined && v !== null ? String(v).trim() : ''));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch rows from the worksheet tab for live preview
+ */
+export async function fetchSheetRows(
+  spreadsheetId: string,
+  sheetName: string,
+  maxRows: number = 50,
+  tokenOverride?: string
+): Promise<{ headers: string[]; rows: string[][] }> {
+  const cleanId = spreadsheetId?.trim();
+  const cleanSheet = sheetName?.trim();
+  if (!cleanId || !cleanSheet) return { headers: [], rows: [] };
+
+  const token = tokenOverride || appState.accessToken;
+  if (!token) return { headers: [], rows: [] };
+
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}/values/${encodeURIComponent(cleanSheet)}!A1:Z${maxRows}?majorDimension=ROWS`;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) return { headers: [], rows: [] };
+
+    const data = await response.json();
+    const values: any[][] = data.values || [];
+    if (values.length === 0) return { headers: [], rows: [] };
+
+    const headers = (values[0] || []).map((v) => (v !== undefined && v !== null ? String(v).trim() : ''));
+    const rows = values.slice(1).map((r) =>
+      headers.map((_, i) => (r[i] !== undefined && r[i] !== null ? String(r[i]) : ''))
+    );
+
+    return { headers, rows };
+  } catch {
+    return { headers: [], rows: [] };
+  }
+}
+
+/**
+ * Ping / Verify Google Spreadsheet reachability using OAuth token
+ */
+export async function pingGoogleSheets(spreadsheetId: string, sheetName?: string, tokenOverride?: string): Promise<SubmitResult> {
+  const meta = await fetchSpreadsheetMetadata(spreadsheetId, tokenOverride);
+  const targetSheet = sheetName?.trim();
+
+  if (targetSheet && !meta.sheetNames.includes(targetSheet)) {
+    return {
+      success: true,
+      message: `Terhubung ke "${meta.title}", tapi tab "${targetSheet}" belum ada.`
+    };
+  }
+
+  return {
+    success: true,
+    message: `Terhubung ke "${meta.title}"${targetSheet ? ` (Tab: ${targetSheet})` : ` (${meta.sheetNames.length} tab)`}`
+  };
 }

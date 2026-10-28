@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { submitRecord, pingGoogleSheets } from './api';
+import { submitRecord, pingGoogleSheets, fetchSpreadsheetMetadata, buildSheetsRowArray } from './api';
 import type { AppConfig, FieldDefinition, ColumnMapping, QRRecord } from './types';
 
-describe('API Integration Layer', () => {
-  const dummyConfig: AppConfig = {
-    dummyMode: true,
-    scriptUrl: '',
+describe('Google Sheets Direct API Integration Layer', () => {
+  const config: AppConfig = {
+    clientId: 'test-client-id.apps.googleusercontent.com',
+    spreadsheetId: 'test-sheet-id-12345',
     sheetName: 'Sheet1',
     writeStrategy: 'append',
     updateKeyFieldId: 'qrContent',
@@ -35,48 +35,85 @@ describe('API Integration Layer', () => {
     submissionStatus: 'saving'
   };
 
-  it('submits successfully in Dummy Mode without network calls', async () => {
-    const res = await submitRecord(record, dummyConfig, fields, mappings);
-    expect(res.success).toBe(true);
-    expect(res.simulated).toBe(true);
-    expect(res.message).toContain('Dummy Mode');
+  it('builds zero-indexed row array according to column mappings', () => {
+    const row = buildSheetsRowArray(record, fields, mappings);
+    expect(row).toEqual([15, 'https://example.com/qr/15', 'PASS']);
   });
 
-  it('throws descriptive error if live mode is active without scriptUrl', async () => {
-    const liveConfigNoUrl: AppConfig = {
-      ...dummyConfig,
-      dummyMode: false,
-      scriptUrl: ''
-    };
-
+  it('throws descriptive error if spreadsheetId is not set', async () => {
+    const noSheetConfig: AppConfig = { ...config, spreadsheetId: '' };
     await expect(
-      submitRecord(record, liveConfigNoUrl, fields, mappings)
-    ).rejects.toThrow('Google Apps Script Web App URL is not configured');
+      submitRecord(record, noSheetConfig, fields, mappings, 'fake-token')
+    ).rejects.toThrow('Spreadsheet ID belum diisi');
   });
 
-  it('handles live fetch and parses success payload', async () => {
+  it('throws descriptive error if access token is missing', async () => {
+    await expect(
+      submitRecord(record, config, fields, mappings, '')
+    ).rejects.toThrow('Belum login Google');
+  });
+
+  it('calls Google Sheets API v4 values.append and parses updated row', async () => {
     const fakeFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ status: 'success', row: 42, message: 'Row 42 written' })
+      json: async () => ({
+        updates: {
+          updatedRange: 'Sheet1!A42:C42',
+          updatedRows: 1
+        }
+      })
     });
     vi.stubGlobal('fetch', fakeFetch);
 
-    const liveConfig: AppConfig = {
-      ...dummyConfig,
-      dummyMode: false,
-      scriptUrl: 'https://script.google.com/macros/s/fake/exec'
-    };
-
-    const res = await submitRecord(record, liveConfig, fields, mappings);
+    const res = await submitRecord(record, config, fields, mappings, 'valid-test-bearer-token');
     expect(res.success).toBe(true);
     expect(res.rowNumber).toBe(42);
 
     expect(fakeFetch).toHaveBeenCalledWith(
-      'https://script.google.com/macros/s/fake/exec',
+      expect.stringContaining('https://sheets.googleapis.com/v4/spreadsheets/test-sheet-id-12345/values/Sheet1!A:append'),
       expect.objectContaining({
-        method: 'POST'
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer valid-test-bearer-token'
+        })
       })
     );
+
+    vi.unstubAllGlobals();
+  });
+
+  it('handles 403 Forbidden with clear permission guidance', async () => {
+    const fakeFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => 'The caller does not have permission'
+    });
+    vi.stubGlobal('fetch', fakeFetch);
+
+    await expect(
+      submitRecord(record, config, fields, mappings, 'unauthorized-token')
+    ).rejects.toThrow(/Akses Spreadsheet ditolak \(403 Forbidden\)/);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('fetches metadata and list of sheet tabs correctly', async () => {
+    const fakeFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        properties: { title: 'Book Quality Audit 2026' },
+        sheets: [
+          { properties: { title: 'Bab 1' } },
+          { properties: { title: 'Bab 2' } },
+          { properties: { title: 'Rekap' } }
+        ]
+      })
+    });
+    vi.stubGlobal('fetch', fakeFetch);
+
+    const meta = await fetchSpreadsheetMetadata('test-sheet-id-12345', 'valid-token');
+    expect(meta.title).toBe('Book Quality Audit 2026');
+    expect(meta.sheetNames).toEqual(['Bab 1', 'Bab 2', 'Rekap']);
 
     vi.unstubAllGlobals();
   });
