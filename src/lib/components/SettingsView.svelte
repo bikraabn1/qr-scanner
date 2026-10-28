@@ -1,7 +1,10 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { appState } from '../store.svelte';
-  import { pingGoogleSheets } from '../api';
-  import { isValidColumnLetter, isValidUrl } from '../utils';
+  import { pingGoogleSheets, fetchSpreadsheetMetadata, fetchSheetHeaders } from '../api';
+  import { isValidColumnLetter } from '../utils';
+  import { requestGoogleAccessToken } from '../google-auth';
+  import { syncFromRowHeaders } from '../sheet-sync';
   import type { FieldDefinition, FieldType } from '../types';
   import {
     CheckCircle2,
@@ -12,15 +15,20 @@
     Plus,
     Volume2,
     VolumeX,
-    Sparkles,
     Check
   } from '@lucide/svelte';
 
-  let scriptUrlInput = $state(appState.config.scriptUrl);
+  let spreadsheetIdInput = $state(appState.config.spreadsheetId);
   let sheetNameInput = $state(appState.config.sheetName);
-  let dummyModeToggle = $state(appState.config.dummyMode);
   let writeStrategyInput = $state(appState.config.writeStrategy);
   let soundEnabled = $state(appState.config.soundEnabled !== false);
+
+  // Available sheet tabs fetched from Google Sheets API
+  let availableSheets = $state<string[]>([]);
+  let isFetchingSheets = $state(false);
+  let fetchSheetsError = $state<string | null>(null);
+  let isSyncingHeaders = $state(false);
+  let syncHeadersNotice = $state<string | null>(null);
 
   let pingStatus = $state<{
     loading: boolean;
@@ -40,6 +48,68 @@
   let newFieldRequired = $state(false);
   let newFieldOptions = $state('');
 
+  // Editing options for a specific select field
+  let editingOptionsFieldId = $state<string | null>(null);
+  let newOptionValue = $state('');
+
+  onMount(() => {
+    // If spreadsheet ID exists and user is logged in, auto load tabs
+    if (spreadsheetIdInput.trim() && appState.accessToken) {
+      loadSheetTabs(spreadsheetIdInput.trim());
+    }
+  });
+
+  async function loadSheetTabs(id: string) {
+    if (!id.trim() || !appState.accessToken) return;
+    isFetchingSheets = true;
+    fetchSheetsError = null;
+
+    try {
+      const meta = await fetchSpreadsheetMetadata(id.trim());
+      availableSheets = meta.sheetNames;
+      if (meta.sheetNames.length > 0) {
+        if (!sheetNameInput || !meta.sheetNames.includes(sheetNameInput)) {
+          sheetNameInput = meta.sheetNames[0];
+          handleSaveConfig();
+          await handleSheetChange(meta.sheetNames[0]);
+        }
+      }
+    } catch (err: unknown) {
+      fetchSheetsError = err instanceof Error ? err.message : String(err);
+    } finally {
+      isFetchingSheets = false;
+    }
+  }
+
+  function handleAddOption(fieldId: string) {
+    if (!newOptionValue.trim()) return;
+    const val = newOptionValue.trim();
+    appState.saveFields(
+      appState.fields.map((f) => {
+        if (f.id === fieldId) {
+          const opts = f.options ? [...f.options] : [];
+          if (!opts.includes(val)) opts.push(val);
+          return { ...f, options: opts };
+        }
+        return f;
+      })
+    );
+    newOptionValue = '';
+    triggerSavedBadge();
+  }
+
+  function handleRemoveOption(fieldId: string, optToRemove: string) {
+    appState.saveFields(
+      appState.fields.map((f) => {
+        if (f.id === fieldId) {
+          return { ...f, options: (f.options || []).filter((o) => o !== optToRemove) };
+        }
+        return f;
+      })
+    );
+    triggerSavedBadge();
+  }
+
   function triggerSavedBadge() {
     saveIndicator = true;
     if (saveTimer) clearTimeout(saveTimer);
@@ -48,11 +118,57 @@
     }, 1500);
   }
 
+  // Auto extract ID if user pastes full spreadsheet URL
+  async function handleSpreadsheetIdBlur() {
+    let val = spreadsheetIdInput.trim();
+    const urlMatch = val.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (urlMatch) {
+      val = urlMatch[1];
+      spreadsheetIdInput = val;
+    }
+    handleSaveConfig();
+
+    if (val && appState.accessToken) {
+      await loadSheetTabs(val);
+    }
+  }
+
+  // Auto sync columns when user selects a worksheet tab
+  async function handleSheetChange(selectedSheet: string) {
+    sheetNameInput = selectedSheet;
+    handleSaveConfig();
+
+    const id = spreadsheetIdInput.trim();
+    if (!id || !selectedSheet || !appState.accessToken) return;
+
+    isSyncingHeaders = true;
+    syncHeadersNotice = null;
+
+    try {
+      const headers = await fetchSheetHeaders(id, selectedSheet);
+      if (headers && headers.length > 0) {
+        const result = syncFromRowHeaders(headers, appState.fields, appState.mappings);
+        appState.saveFields(result.fields);
+        appState.saveMappings(result.mappings);
+        triggerSavedBadge();
+        syncHeadersNotice = `Otomatis sinkron ${result.matchedCount} kolom dari Row 1 tab "${selectedSheet}".`;
+      } else {
+        syncHeadersNotice = `Tab "${selectedSheet}" baris 1 kosong. Menggunakan mapping standar.`;
+      }
+    } catch (err: unknown) {
+      console.warn('Gagal sync header sheet:', err);
+    } finally {
+      isSyncingHeaders = false;
+      setTimeout(() => {
+        syncHeadersNotice = null;
+      }, 4000);
+    }
+  }
+
   function handleSaveConfig() {
     appState.saveConfig({
-      scriptUrl: scriptUrlInput.trim(),
-      sheetName: sheetNameInput.trim() || 'Sheet1',
-      dummyMode: dummyModeToggle,
+      spreadsheetId: spreadsheetIdInput.trim(),
+      sheetName: sheetNameInput.trim(),
       writeStrategy: writeStrategyInput,
       autoClearOnSubmit: true,
       soundEnabled
@@ -60,28 +176,59 @@
     triggerSavedBadge();
   }
 
+  async function handleRefreshSheets() {
+    const id = spreadsheetIdInput.trim();
+    if (!id) {
+      alert('Masukkan Spreadsheet ID atau link Google Sheets terlebih dahulu');
+      return;
+    }
+
+    if (!appState.accessToken) {
+      try {
+        await requestGoogleAccessToken();
+      } catch (err) {
+        alert('Perlu login Google untuk membaca daftar sheet tab: ' + String(err));
+        return;
+      }
+    }
+
+    await loadSheetTabs(id);
+  }
+
   async function handleTestConnection() {
-    if (!isValidUrl(scriptUrlInput)) return;
+    if (!spreadsheetIdInput.trim()) return;
+
+    if (!appState.accessToken) {
+      try {
+        await requestGoogleAccessToken();
+      } catch (err) {
+        alert('Perlu login Google untuk menguji akses spreadsheet: ' + String(err));
+        return;
+      }
+    }
+
     const start = performance.now();
     pingStatus = { loading: true };
 
     try {
-      const res = await pingGoogleSheets(scriptUrlInput, sheetNameInput);
+      const res = await pingGoogleSheets(spreadsheetIdInput.trim(), sheetNameInput.trim());
       const latency = Math.round(performance.now() - start);
       pingStatus = {
         loading: false,
         success: true,
         latencyMs: latency,
         testedAt: new Date().toLocaleTimeString(),
-        message: res.message || 'Endpoint reachable'
+        message: res.message || 'Spreadsheet terverifikasi'
       };
       handleSaveConfig();
+      // Also ensure tabs are updated
+      await loadSheetTabs(spreadsheetIdInput.trim());
     } catch (err: unknown) {
       pingStatus = {
         loading: false,
         success: false,
         testedAt: new Date().toLocaleTimeString(),
-        message: err instanceof Error ? err.message : 'Connection failed'
+        message: err instanceof Error ? err.message : 'Gagal mengakses spreadsheet'
       };
     }
   }
@@ -182,7 +329,7 @@
   <div class="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3">
     <div>
       <h1 class="text-sm font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">Instrument Configuration</h1>
-      <p class="text-xs text-zinc-500 dark:text-zinc-400">Settings and destination worksheet mappings</p>
+      <p class="text-xs text-zinc-500 dark:text-zinc-400">Google OAuth & Destination Spreadsheet Settings</p>
     </div>
 
     <!-- Autosave indicator -->
@@ -197,99 +344,86 @@
     </div>
   </div>
 
-  <!-- 1. Google Sheets Integration & Dummy Switch -->
+  <!-- 1. Destination Spreadsheet Configuration -->
   <div class="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-5 shadow-2xs space-y-5 transition-colors">
     <div class="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
       <div>
-        <h2 class="text-xs font-semibold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">Google Sheets Integration</h2>
-        <p class="text-[11px] text-zinc-500 dark:text-zinc-400">Configure Web App URL and destination worksheet</p>
-      </div>
-    </div>
-
-    <!-- Dummy Mode Switch -->
-    <div class="p-3.5 rounded-md border {dummyModeToggle ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/40' : 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/40'} flex items-start justify-between gap-4">
-      <div class="space-y-1">
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-bold text-zinc-900 dark:text-zinc-100">Operating Mode</span>
-          <span class="text-[11px] font-mono-data font-semibold {dummyModeToggle ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}">
-            {dummyModeToggle ? 'DUMMY MODE (SIMULATED)' : 'LIVE MODE (GOOGLE SHEETS)'}
-          </span>
-        </div>
-        <p class="text-xs text-zinc-600 dark:text-zinc-400">
-          {#if dummyModeToggle}
-            Records are stored locally only in browser storage. No network requests are made to Google Sheets.
-          {:else}
-            Records are written directly to Google Sheets worksheet: <strong class="text-zinc-900 dark:text-zinc-100 font-mono-data">{sheetNameInput.trim() || 'Sheet1'}</strong>.
-          {/if}
+        <h2 class="text-xs font-semibold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+          Target Google Spreadsheet
+        </h2>
+        <p class="text-[11px] text-zinc-500 dark:text-zinc-400">
+          Tentukan file Spreadsheet dan tab worksheet untuk menyimpan data hasil uji
         </p>
       </div>
 
-      <!-- Real Switch -->
-      <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
-        <input
-          type="checkbox"
-          bind:checked={dummyModeToggle}
-          onchange={handleSaveConfig}
-          class="sr-only peer"
-        />
-        <div class="w-11 h-6 bg-zinc-300 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
-      </label>
+      {#if appState.user}
+        <span class="inline-flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-sm font-medium">
+          <CheckCircle2 class="w-3.5 h-3.5" />
+          {appState.user.email}
+        </span>
+      {/if}
     </div>
 
-    <!-- Script URL & Sheet Tab Settings -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div class="space-y-1.5 md:col-span-2">
-        <label for="script-url" class="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-          Google Apps Script Web App URL
+    <!-- Inputs: Spreadsheet ID, Sheet Tab Selector, Audio -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="space-y-1.5">
+        <label for="spreadsheet-id" class="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+          Spreadsheet URL atau ID
         </label>
         <input
-          id="script-url"
-          type="url"
-          bind:value={scriptUrlInput}
-          onblur={handleSaveConfig}
-          placeholder="https://script.google.com/macros/s/.../exec"
+          id="spreadsheet-id"
+          type="text"
+          bind:value={spreadsheetIdInput}
+          onblur={handleSpreadsheetIdBlur}
+          placeholder="Paste URL Google Sheets atau ID (contoh: 1BxiMVs0XRA5...)"
           class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
         />
-        <p class="text-[11px] text-zinc-500">Deploy as Web App with "Execute as: Me" and "Who has access: Anyone".</p>
       </div>
 
+      <!-- Pure Dropdown Tab Selector -->
       <div class="space-y-1.5">
-        <label for="sheet-name" class="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-          Worksheet / Tab Name
-        </label>
-        <input
-          id="sheet-name"
-          type="text"
-          bind:value={sheetNameInput}
-          onblur={handleSaveConfig}
-          placeholder="Sheet1"
-          class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
-        />
-      </div>
-    </div>
+        <div class="flex items-center justify-between">
+          <label for="sheet-name" class="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+            Tab Worksheet
+          </label>
+          <button
+            type="button"
+            disabled={isFetchingSheets || !spreadsheetIdInput.trim()}
+            class="inline-flex items-center gap-1 text-[11px] font-mono-data text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-40 disabled:no-underline cursor-pointer"
+            onclick={handleRefreshSheets}
+            title="Muat ulang daftar sheet dari Google Sheets"
+          >
+            <RefreshCw class="w-3 h-3 {isFetchingSheets ? 'animate-spin' : ''}" />
+            <span>{isFetchingSheets ? 'Fetching tabs...' : 'Refresh tab'}</span>
+          </button>
+        </div>
 
-    <!-- Secondary options: Sound beep & Write strategy -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-      <div class="space-y-1.5">
-        <label for="write-strategy" class="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-          Write Strategy
-        </label>
         <select
-          id="write-strategy"
-          bind:value={writeStrategyInput}
-          onchange={handleSaveConfig}
-          class="w-full text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100"
+          id="sheet-name"
+          disabled={availableSheets.length === 0}
+          value={sheetNameInput}
+          onchange={(e) => handleSheetChange((e.target as HTMLSelectElement).value)}
+          class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100 disabled:opacity-50 disabled:bg-zinc-100 dark:disabled:bg-zinc-900"
         >
-          <option value="append">Append (Add new row per scan)</option>
-          <option value="update">Update (Match unique key)</option>
+          {#if availableSheets.length === 0}
+            <option value="">{spreadsheetIdInput.trim() ? 'Klik "Refresh tab" untuk memuat daftar...' : 'Masukkan Spreadsheet ID terlebih dahulu'}</option>
+          {:else}
+            {#each availableSheets as s}
+              <option value={s}>{s}</option>
+            {/each}
+          {/if}
         </select>
+        {#if isSyncingHeaders}
+          <p class="text-[11px] text-blue-600 dark:text-blue-400 font-mono-data animate-pulse">Menyelaraskan mapping dari Row 1...</p>
+        {:else if syncHeadersNotice}
+          <p class="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono-data">{syncHeadersNotice}</p>
+        {:else if fetchSheetsError}
+          <p class="text-[11px] text-red-500 dark:text-red-400">{fetchSheetsError}</p>
+        {/if}
       </div>
 
-      <div class="space-y-1.5">
-        <span class="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-          Scan Sound Feedback
-        </span>
-        <label class="flex items-center gap-2 py-2 text-xs text-zinc-800 dark:text-zinc-200 cursor-pointer">
+      <div class="space-y-1.5 md:col-span-2">
+        <label class="flex items-center gap-2 py-1 text-xs text-zinc-800 dark:text-zinc-200 cursor-pointer">
           <input
             type="checkbox"
             bind:checked={soundEnabled}
@@ -310,14 +444,14 @@
     <!-- Test Connection & Inline Results -->
     <div class="pt-3 border-t border-zinc-100 dark:border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
       <div>
-        {#if !isValidUrl(scriptUrlInput)}
+        {#if !spreadsheetIdInput.trim()}
           <span class="text-[11px] text-zinc-500 font-mono-data">
-            Enter a valid Apps Script Web App URL to test connection
+            Masukkan Spreadsheet ID untuk menguji izin akses
           </span>
         {:else if pingStatus.loading}
           <div class="text-xs text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5 font-mono-data">
             <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-            Pinging Google Apps Script endpoint...
+            Memeriksa hak akses spreadsheet via Google Sheets API...
           </div>
         {:else if pingStatus.success !== undefined}
           <div class="text-xs flex items-center gap-1.5 font-mono-data {pingStatus.success ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}">
@@ -331,19 +465,19 @@
               <span class="text-zinc-500">({pingStatus.latencyMs}ms)</span>
             {/if}
             {#if pingStatus.testedAt}
-              <span class="text-zinc-400">• tested at {pingStatus.testedAt}</span>
+              <span class="text-zinc-400">• diuji pukul {pingStatus.testedAt}</span>
             {/if}
           </div>
         {:else}
           <span class="text-[11px] text-zinc-500 font-mono-data">
-            Ready to test reachability
+            Siap menguji akses Spreadsheet
           </span>
         {/if}
       </div>
 
       <button
         type="button"
-        disabled={pingStatus.loading || !isValidUrl(scriptUrlInput)}
+        disabled={pingStatus.loading || !spreadsheetIdInput.trim()}
         class="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium rounded-sm border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:pointer-events-none"
         onclick={handleTestConnection}
       >
@@ -402,7 +536,7 @@
           <tr>
             <th class="py-2 px-3 w-12 text-center">Active</th>
             <th class="py-2 px-3">Field Name</th>
-            <th class="py-2 px-3 w-28">Type</th>
+            <th class="py-2 px-3 w-32">Type</th>
             <th class="py-2 px-3 w-28">Column</th>
             <th class="py-2 px-3 w-14 text-right"></th>
           </tr>
@@ -435,9 +569,21 @@
                 <span class="ml-1.5 text-[10px] font-mono-data text-zinc-400">({field.id})</span>
               </td>
 
-              <!-- Type as small plain label -->
-              <td class="py-2 px-3 text-zinc-500 dark:text-zinc-400 font-mono-data text-[11px]">
-                {field.type}
+              <!-- Type as small plain label + option manager for select -->
+              <td class="py-2 px-3 text-[11px]">
+                <div class="flex items-center gap-1.5 font-mono-data">
+                  <span class="text-zinc-500 dark:text-zinc-400">{field.type}</span>
+                  {#if field.type === 'select'}
+                    <button
+                      type="button"
+                      class="text-[10px] px-1.5 py-0.5 rounded-xs border transition-colors {editingOptionsFieldId === field.id ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 border-transparent font-bold' : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'}"
+                      onclick={() => editingOptionsFieldId = editingOptionsFieldId === field.id ? null : field.id}
+                      title="Manage dropdown choices"
+                    >
+                      {field.options?.length || 0} opts {editingOptionsFieldId === field.id ? '▲' : '▼'}
+                    </button>
+                  {/if}
+                </div>
               </td>
 
               <!-- Column Input with inline validation -->
@@ -467,6 +613,73 @@
                 {/if}
               </td>
             </tr>
+
+            <!-- Expanded Option Manager for select field -->
+            {#if editingOptionsFieldId === field.id && field.type === 'select'}
+              <tr class="bg-zinc-100/70 dark:bg-zinc-950/70">
+                <td colspan="5" class="py-3 px-4 border-b border-zinc-200 dark:border-zinc-800">
+                  <div class="space-y-2">
+                    <div class="flex items-center justify-between text-xs">
+                      <span class="font-semibold text-zinc-800 dark:text-zinc-200">
+                        Pilihan Dropdown untuk "{field.label}":
+                      </span>
+                      <button
+                        type="button"
+                        class="text-[11px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+                        onclick={() => editingOptionsFieldId = null}
+                      >
+                        Tutup ✕
+                      </button>
+                    </div>
+
+                    <!-- List of chips -->
+                    <div class="flex flex-wrap gap-1.5">
+                      {#if (field.options || []).length === 0}
+                        <span class="text-xs text-zinc-400 italic">Belum ada opsi. Tambahkan di bawah:</span>
+                      {:else}
+                        {#each field.options || [] as opt}
+                          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs font-mono-data text-zinc-800 dark:text-zinc-200">
+                            <span>{opt}</span>
+                            <button
+                              type="button"
+                              class="text-zinc-400 hover:text-red-500 font-bold ml-0.5"
+                              title={`Hapus "${opt}"`}
+                              onclick={() => handleRemoveOption(field.id, opt)}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        {/each}
+                      {/if}
+                    </div>
+
+                    <!-- Add new option input -->
+                    <div class="flex items-center gap-2 pt-1 max-w-sm">
+                      <input
+                        type="text"
+                        placeholder="Ketik opsi baru..."
+                        bind:value={newOptionValue}
+                        onkeydown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddOption(field.id);
+                          }
+                        }}
+                        class="flex-1 text-xs py-1 px-2.5 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400"
+                      />
+                      <button
+                        type="button"
+                        disabled={!newOptionValue.trim()}
+                        class="px-2.5 py-1 text-xs font-semibold rounded-sm bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 hover:bg-zinc-800 disabled:opacity-40"
+                        onclick={() => handleAddOption(field.id)}
+                      >
+                        + Tambah
+                      </button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            {/if}
           {/each}
         </tbody>
       </table>
@@ -543,31 +756,7 @@
     </div>
   </div>
 
-  <!-- 3. Developer Section (Visible in Dummy Mode only) -->
-  {#if dummyModeToggle}
-    <div class="bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 space-y-2">
-      <div class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
-        <Sparkles class="w-3.5 h-3.5 text-amber-500" />
-        Developer Samples (Dummy Mode Only)
-      </div>
-      <p class="text-[11px] text-zinc-500">
-        Quick QR destination URLs to verify parsers, audio cues, and sheet columns:
-      </p>
-      <div class="flex flex-wrap gap-2 pt-1 font-mono-data text-[11px]">
-        <code class="px-2 py-0.5 rounded-sm bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300">
-          https://example.com/books/ch1/qr-01
-        </code>
-        <code class="px-2 py-0.5 rounded-sm bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300">
-          https://example.com/media/video-03.mp4
-        </code>
-        <code class="px-2 py-0.5 rounded-sm bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300">
-          https://books.publisher.org/quiz/ch-04
-        </code>
-      </div>
-    </div>
-  {/if}
-
-  <!-- 4. Danger Zone / Reset -->
+  <!-- 3. Danger Zone / Reset -->
   <div class="flex items-center justify-between p-3.5 rounded-lg border border-red-500/20 bg-red-500/5 text-xs">
     <div>
       <div class="font-bold text-red-600 dark:text-red-400">Reset Configuration to Factory Defaults</div>
@@ -579,8 +768,9 @@
       onclick={() => {
         if (confirm('Reset all field definitions and column mappings back to default?')) {
           appState.resetToDefaults();
-          scriptUrlInput = appState.config.scriptUrl;
+          spreadsheetIdInput = appState.config.spreadsheetId;
           sheetNameInput = appState.config.sheetName;
+          availableSheets = [];
           triggerSavedBadge();
         }
       }}
