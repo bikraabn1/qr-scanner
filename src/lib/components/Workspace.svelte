@@ -6,6 +6,7 @@
   import { parseDestination } from '../url-parser';
   import { playScanBeep } from '../audio';
   import { buildSheetIndex, findSkuField, findNameField, type KnownBook } from '../book-index';
+  import { YES_RE } from '../column-sync';
   import { columnLetterToIndex } from '../utils';
   import MediaPreview from './MediaPreview.svelte';
   import type { QRRecord, TestStatus } from '../types';
@@ -243,6 +244,7 @@
       autoFilledName = book.name;
     }
     matchedBook = book;
+    applyBooleanFromRow();
   }
 
   /**
@@ -279,6 +281,29 @@
     }
   }
 
+  /**
+   * "KONTEN INTERNAL TS?" holds Ya/Bukan in the sheet, so the checkbox is not a free choice:
+   * it mirrors that column for the matched book (Ya -> centang, Bukan -> kosong).
+   */
+  function applyBooleanFromRow() {
+    if (!matchedBook) return;
+    for (const field of appState.fields) {
+      if (field.type !== 'boolean' || field.readOnly) continue;
+      const letter = appState.mappings.find((m) => m.fieldId === field.id)?.columnLetter;
+      if (!letter) continue;
+      let idx: number;
+      try {
+        idx = columnLetterToIndex(letter) - 1;
+      } catch {
+        continue;
+      }
+      const value = (matchedBook.cells[idx] ?? '').trim();
+      if (!value) continue;
+      const labels = optionsFor(field);
+      formValues[field.id] = labels.length >= 2 ? value === labels[0] : YES_RE.test(value);
+    }
+  }
+
   function applyKnownSku() {
     if (!skuFieldId) return;
     const key = String(formValues[skuFieldId] || '').trim().toLowerCase();
@@ -293,6 +318,7 @@
         autoFilledName = book.name;
       }
     }
+    applyBooleanFromRow();
   }
 
   function initDefaultValues() {
@@ -308,8 +334,10 @@
         formValues[f.id] = todayIso;
       } else if (f.type === 'datetime') {
         formValues[f.id] = nowIso;
+      } else if (f.type === 'boolean') {
+        formValues[f.id] = f.defaultValue === true;
       } else {
-        formValues[f.id] = f.type === 'boolean' ? false : '';
+        formValues[f.id] = '';
       }
     }
   }

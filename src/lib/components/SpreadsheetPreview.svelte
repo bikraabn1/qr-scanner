@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { syncColumnsFromSheet } from '../column-sync';
+  import { syncColumnsFromSheet, inferChoiceLabels } from '../column-sync';
   import { appState } from '../store.svelte';
   import { fetchSheetRows, updateSheetCell, type SheetRowItem } from '../api';
   import {
@@ -87,6 +87,10 @@
       const data = await fetchSheetRows(spreadsheetId, currentSheet, 500);
       headers = data.headers;
       rows = data.rows;
+      // Checkbox/dropdown labels come from the column's own values when the sheet has no
+      // data-validation rule (e.g. "KONTEN INTERNAL TS?" holds Ya/Bukan as plain text).
+      const withLabels = inferChoiceLabels(appState.fields, appState.mappings, data.rows);
+      if (withLabels !== appState.fields) appState.saveFields(withLabels);
       appState.setSheetSnapshot({ headers: data.headers, rows: data.rows });
       lastFetchedTime = new Date().toLocaleTimeString();
     } catch (err) {
