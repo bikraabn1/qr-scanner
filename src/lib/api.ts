@@ -8,6 +8,11 @@ export interface SubmitResult {
   rowNumber?: number;
 }
 
+export interface SheetRowItem {
+  rowNumber: number;
+  cells: string[];
+}
+
 /**
  * Convert column-mapped dictionary into a 0-indexed row array for Google Sheets API values.append
  */
@@ -53,6 +58,67 @@ export function formatA1Range(sheetName: string, subRange: string): string {
 }
 
 /**
+ * Find the next available row (or existing row if updating) in a given column.
+ * Skips row 1 (headers) and finds the first empty cell so template rows with default values in other columns
+ * aren't skipped or appended past.
+ */
+export async function findTargetRow(
+  spreadsheetId: string,
+  sheetName: string,
+  keyColumnLetter: string,
+  token: string,
+  strategy: 'append' | 'update' = 'append',
+  searchValue?: string
+): Promise<number> {
+  const cleanId = spreadsheetId?.trim();
+  const cleanSheet = sheetName?.trim();
+  const cleanCol = keyColumnLetter?.trim().toUpperCase();
+  if (!cleanId || !cleanSheet || !cleanCol) return 2;
+
+  const safeRange = formatA1Range(cleanSheet, `${cleanCol}:${cleanCol}`);
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}/values/${encodeURIComponent(safeRange)}?majorDimension=ROWS`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  const response = await fetch(endpoint, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: controller.signal
+  });
+  clearTimeout(timeoutId);
+
+  if (!response.ok) {
+    throw new Error(`Gagal membaca kolom ${cleanCol} (${response.status})`);
+  }
+
+  const data = await response.json();
+  const values: any[][] = data.values || [];
+
+  // Update strategy: check if key value already exists in the sheet
+  if (strategy === 'update' && searchValue && searchValue.trim()) {
+    const cleanSearch = searchValue.trim();
+    for (let i = 1; i < values.length; i++) {
+      const cell = values[i]?.[0];
+      if (cell !== undefined && cell !== null && String(cell).trim() === cleanSearch) {
+        return i + 1;
+      }
+    }
+  }
+
+  // Find first empty cell from row 2 (index 1) onwards
+  let i = 1;
+  while (i < values.length) {
+    const row = values[i];
+    if (!row || row.length === 0 || row[0] === undefined || row[0] === null || String(row[0]).trim() === '') {
+      return i + 1;
+    }
+    i++;
+  }
+
+  return i + 1;
+}
+
+/**
  * Submit record directly to Google Sheets via official REST API v4
  */
 export async function submitRecord(
@@ -76,6 +142,92 @@ export async function submitRecord(
   if (!sheetName) {
     throw new Error('Tab Sheet belum dipilih. Silakan pilih tab di tab Config.');
   }
+
+  const columnMap = buildRowPayload(record, fields, mappings);
+  if (Object.keys(columnMap).length === 0) {
+    throw new Error('Tidak ada kolom yang aktif atau di-mapping ke Google Sheets.');
+  }
+
+  // Find key column to detect existing rows / empty template slots
+  const keyMapping =
+    mappings.find((m) => m.fieldId === 'qrContent' && m.columnLetter) ||
+    mappings.find((m) => m.fieldId === 'pageNumber' && m.columnLetter) ||
+    mappings.find((m) => m.columnLetter);
+
+  const keyColumnLetter = keyMapping?.columnLetter?.trim().toUpperCase();
+
+  let targetRow: number | null = null;
+  if (keyColumnLetter) {
+    try {
+      targetRow = await findTargetRow(
+        spreadsheetId,
+        sheetName,
+        keyColumnLetter,
+        token,
+        config.writeStrategy,
+        record.qrContent
+      );
+    } catch (findErr) {
+      console.warn('Gagal mencari baris target, fallback ke append:', findErr);
+    }
+  }
+
+  // If a targeted row is found, write directly using values:batchUpdate to avoid wiping unmapped template cells
+  if (targetRow && targetRow > 1) {
+    const data = Object.entries(columnMap).map(([colLetter, val]) => ({
+      range: formatA1Range(sheetName, `${colLetter}${targetRow}`),
+      values: [[val]]
+    }));
+
+    const batchEndpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values:batchUpdate`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch(batchEndpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          valueInputOption: 'USER_ENTERED',
+          data
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          appState.signOut();
+          throw new Error('Sesi login Google telah kedaluwarsa. Silakan Sign in with Google ulang.');
+        }
+        if (response.status === 403) {
+          throw new Error(
+            `Akses Spreadsheet ditolak (403 Forbidden). Pastikan akun Google Anda (${appState.user?.email || 'tester'}) sudah di-share hak akses "Editor" pada Google Spreadsheet tersebut.`
+          );
+        }
+        if (response.status === 404) {
+          throw new Error(`Spreadsheet tidak ditemukan (404). Periksa kembali Spreadsheet ID: "${spreadsheetId}".`);
+        }
+        const errText = await response.text();
+        throw new Error(`Google Sheets API Error (${response.status}): ${errText}`);
+      }
+
+      return {
+        success: true,
+        message: `Tersimpan ke Google Sheets: baris ${targetRow}`,
+        rowNumber: targetRow
+      };
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new Error('Koneksi ke Google Sheets timed out (15s). Cek internet Anda.');
+      }
+      throw err;
+    }
+  }
+
   const rowArray = buildSheetsRowArray(record, fields, mappings);
 
   // Use OVERWRITE insertDataOption so preexisting cell validations, conditional formats, and empty row styles aren't shifted/distorted
@@ -332,14 +484,30 @@ export async function fetchSheetValidationRules(
 }
 
 /**
+ * Detect whether a row has genuine scanned content or is merely an empty/boilerplate template row
+ */
+export function isRealRecord(cells: string[]): boolean {
+  const filled = cells.filter((c) => c && c.trim() !== '');
+  if (filled.length === 0) return false;
+  // If only 1 cell filled, check if it's a template boilerplate default (e.g. "Bukan", "Ya", "FALSE")
+  if (filled.length === 1) {
+    const single = filled[0].trim().toLowerCase();
+    if (['bukan', 'ya', 'false', 'true', '-', 'n/a', 'none', 'default', 'null'].includes(single)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Fetch rows from the worksheet tab for live preview
  */
 export async function fetchSheetRows(
   spreadsheetId: string,
   sheetName: string,
-  maxRows: number = 50,
+  maxRows: number = 500,
   tokenOverride?: string
-): Promise<{ headers: string[]; rows: string[][] }> {
+): Promise<{ headers: string[]; rows: SheetRowItem[] }> {
   const cleanId = spreadsheetId?.trim();
   const cleanSheet = sheetName?.trim();
   if (!cleanId || !cleanSheet) return { headers: [], rows: [] };
@@ -367,9 +535,18 @@ export async function fetchSheetRows(
     if (values.length === 0) return { headers: [], rows: [] };
 
     const headers = (values[0] || []).map((v) => (v !== undefined && v !== null ? String(v).trim() : ''));
-    const rows = values.slice(1).map((r) =>
-      headers.map((_, i) => (r[i] !== undefined && r[i] !== null ? String(r[i]) : ''))
-    );
+    const rows: SheetRowItem[] = [];
+
+    for (let rIdx = 1; rIdx < values.length; rIdx++) {
+      const r = values[rIdx] || [];
+      const cells = headers.map((_, i) => (r[i] !== undefined && r[i] !== null ? String(r[i]).trim() : ''));
+      if (isRealRecord(cells)) {
+        rows.push({
+          rowNumber: rIdx + 1,
+          cells
+        });
+      }
+    }
 
     return { headers, rows };
   } catch {

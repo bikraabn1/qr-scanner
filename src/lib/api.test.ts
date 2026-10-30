@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { submitRecord, pingGoogleSheets, fetchSpreadsheetMetadata, buildSheetsRowArray } from './api';
+import {
+  submitRecord,
+  pingGoogleSheets,
+  fetchSpreadsheetMetadata,
+  buildSheetsRowArray,
+  findTargetRow,
+  isRealRecord
+} from './api';
 import type { AppConfig, FieldDefinition, ColumnMapping, QRRecord } from './types';
 
 describe('Google Sheets Direct API Integration Layer', () => {
@@ -53,29 +60,122 @@ describe('Google Sheets Direct API Integration Layer', () => {
     ).rejects.toThrow('Belum login Google');
   });
 
-  it('calls Google Sheets API v4 values.append and parses updated row', async () => {
+  it('finds the next available empty row slot even when other columns have template defaults', async () => {
     const fakeFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        updates: {
-          updatedRange: 'Sheet1!A42:C42',
-          updatedRows: 1
-        }
+        values: [
+          ['LINK QR'],
+          ['https://media.example.com/1'],
+          ['https://media.example.com/2'],
+          ['https://media.example.com/3'],
+          ['https://media.example.com/4'],
+          ['https://media.example.com/5'],
+          // Row 7 has empty QR cell (even if column H has "Bukan")
+          ['']
+        ]
       })
     });
+    vi.stubGlobal('fetch', fakeFetch);
+
+    const targetRow = await findTargetRow('test-sheet-id-12345', 'Sheet1', 'B', 'fake-token');
+    expect(targetRow).toBe(7);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('filters out boilerplate template-only rows in isRealRecord', () => {
+    expect(isRealRecord([])).toBe(false);
+    expect(isRealRecord(['', '', ''])).toBe(false);
+    expect(isRealRecord(['', '', '', '', '', '', '', 'Bukan', ''])).toBe(false);
+    expect(isRealRecord(['FALSE'])).toBe(false);
+
+    // Real rows with scanned data
+    expect(
+      isRealRecord([
+        '131304.81',
+        'Eksplorasi Ilmu Pengetahuan Alam',
+        'Platinum',
+        '14',
+        'https://media.tigaserangkai.com/512845160787409989',
+        'Video',
+        '',
+        'Ya',
+        'Sesuai'
+      ])
+    ).toBe(true);
+
+    expect(isRealRecord(['', '', '30', 'https://media.tigaserangkai.com/420273509611150779'])).toBe(true);
+  });
+
+  it('calls Google Sheets API v4 values:batchUpdate targeted to the empty row slot', async () => {
+    const fakeFetch = vi.fn()
+      // First call: findTargetRow reads column B:B
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          values: [
+            ['LINK QR'],
+            ['https://media.example.com/1'],
+            ['https://media.example.com/2']
+          ]
+        })
+      })
+      // Second call: batchUpdate to row 4
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          totalUpdatedRows: 1
+        })
+      });
+    vi.stubGlobal('fetch', fakeFetch);
+
+    const res = await submitRecord(record, config, fields, mappings, 'valid-test-bearer-token');
+    expect(res.success).toBe(true);
+    expect(res.rowNumber).toBe(4);
+
+    expect(fakeFetch).toHaveBeenLastCalledWith(
+      expect.stringContaining('/values:batchUpdate'),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer valid-test-bearer-token',
+          'Content-Type': 'application/json'
+        }),
+        body: expect.stringContaining("'Sheet1'!B4")
+      })
+    );
+
+    vi.unstubAllGlobals();
+  });
+
+  it('falls back to values.append when column inspection fails', async () => {
+    const fakeFetch = vi.fn()
+      // First call: findTargetRow fails
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500
+      })
+      // Second call: fallback to append
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          updates: {
+            updatedRange: 'Sheet1!A42:C42',
+            updatedRows: 1
+          }
+        })
+      });
     vi.stubGlobal('fetch', fakeFetch);
 
     const res = await submitRecord(record, config, fields, mappings, 'valid-test-bearer-token');
     expect(res.success).toBe(true);
     expect(res.rowNumber).toBe(42);
 
-    expect(fakeFetch).toHaveBeenCalledWith(
+    expect(fakeFetch).toHaveBeenLastCalledWith(
       expect.stringContaining("values/'Sheet1'!A%3AZ:append"),
       expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({
-          Authorization: 'Bearer valid-test-bearer-token'
-        })
+        method: 'POST'
       })
     );
 

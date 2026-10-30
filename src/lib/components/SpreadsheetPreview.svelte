@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { appState } from '../store.svelte';
-  import { fetchSheetRows } from '../api';
+  import { fetchSheetRows, type SheetRowItem } from '../api';
   import {
     FileSpreadsheet,
     RefreshCw,
@@ -12,7 +12,7 @@
   } from '@lucide/svelte';
 
   let headers = $state<string[]>([]);
-  let rows = $state<string[][]>([]);
+  let rows = $state<SheetRowItem[]>([]);
   let isLoading = $state(false);
   let searchQuery = $state('');
   let lastFetchedTime = $state<string | null>(null);
@@ -24,7 +24,7 @@
   let filteredRows = $derived.by(() => {
     if (!searchQuery.trim()) return rows;
     const q = searchQuery.toLowerCase();
-    return rows.filter((row) => row.some((cell) => cell.toLowerCase().includes(q)));
+    return rows.filter((item) => item.cells.some((cell) => cell.toLowerCase().includes(q)));
   });
 
   onMount(() => {
@@ -44,7 +44,7 @@
     if (!spreadsheetId || !currentSheet || !appState.accessToken) return;
     isLoading = true;
     try {
-      const data = await fetchSheetRows(spreadsheetId, currentSheet, 60);
+      const data = await fetchSheetRows(spreadsheetId, currentSheet, 500);
       headers = data.headers;
       rows = data.rows;
       lastFetchedTime = new Date().toLocaleTimeString();
@@ -149,13 +149,13 @@
               </td>
             </tr>
           {:else}
-            {#each filteredRows as row, rIdx}
+            {#each filteredRows as item (item.rowNumber)}
               <tr class="hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40 transition-colors">
-                <td class="py-1.5 px-2.5 text-center text-[10px] text-zinc-400 border-r border-zinc-200 dark:border-zinc-800">
-                  {rIdx + 2}
+                <td class="py-1.5 px-2.5 text-center text-[10px] text-zinc-400 border-r border-zinc-200 dark:border-zinc-800 font-mono">
+                  {item.rowNumber}
                 </td>
                 {#each headers as _, cIdx}
-                  {@const val = row[cIdx] || ''}
+                  {@const val = item.cells[cIdx] || ''}
                   <td class="py-1.5 px-3 border-r border-zinc-200 dark:border-zinc-800 last:border-r-0 max-w-[220px] truncate" title={val}>
                     {#if val.startsWith('http://') || val.startsWith('https://')}
                       <a
