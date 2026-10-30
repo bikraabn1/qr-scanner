@@ -43,6 +43,7 @@
           step="1"
           value={appState.currentPage}
           oninput={handleInput}
+          onchange={handleInput}
           aria-label="Book page number input"
           class="w-16 text-center font-mono-data text-lg font-bold bg-transparent text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:focus:ring-zinc-600"
         />

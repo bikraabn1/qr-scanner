@@ -127,7 +127,8 @@ export function buildRowPayload(
     if (!col) continue;
 
     const field = fields.find((f) => f.id === mapping.fieldId);
-    if (!field || !field.enabled) continue;
+    // Read-only columns are filled in the sheet by a human — never write them, or submit blanks them.
+    if (!field || !field.enabled || field.readOnly) continue;
 
     const val = getFieldValue(record, mapping.fieldId, field);
     payload[col] = val;

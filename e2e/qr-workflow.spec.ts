@@ -23,6 +23,18 @@ test.describe('QR Book Tester Workflow', () => {
     await page.getByRole('button', { name: '+5' }).click();
     await expect(pageInput).toHaveValue('6');
 
+    // Typing a page number by hand must stick (regression: field used to snap back)
+    await pageInput.fill('');
+    await pageInput.type('42');
+    await expect(pageInput).toHaveValue('42');
+    await expect(page.locator('#field-pageNumber')).toHaveValue('42');
+
+    // And the form field itself must accept typing too
+    await page.locator('#field-pageNumber').fill('');
+    await page.locator('#field-pageNumber').type('7');
+    await expect(page.locator('#field-pageNumber')).toHaveValue('7');
+    await expect(pageInput).toHaveValue('7');
+
     // 4. Verify live spreadsheet preview section is present
     await expect(page.locator('text=Sheet Live Preview')).toBeVisible();
 

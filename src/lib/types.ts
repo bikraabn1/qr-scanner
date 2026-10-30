@@ -18,6 +18,8 @@ export interface FieldDefinition {
   options?: string[]; // for select type
   isBuiltIn?: boolean; // built-in fields cannot be deleted
   enabled: boolean;
+  /** Filled in the sheet by a human afterwards (e.g. verification verdict) — greyed out, never written. */
+  readOnly?: boolean;
 }
 
 export interface ColumnMapping {

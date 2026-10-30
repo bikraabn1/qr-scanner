@@ -161,7 +161,8 @@
         syncHeadersNotice = `Tab "${selectedSheet}" baris 1 kosong. Menggunakan mapping standar.`;
       }
     } catch (err: unknown) {
-      console.warn('Gagal sync header sheet:', err);
+      // Thrown (not swallowed) by the API layer so scope/API errors are visible, not silently ignored
+      syncHeadersNotice = err instanceof Error ? err.message : String(err);
     } finally {
       isSyncingHeaders = false;
       setTimeout(() => {

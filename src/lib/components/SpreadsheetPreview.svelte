@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { syncColumnsFromSheet } from '../column-sync';
   import { appState } from '../store.svelte';
-  import { fetchSheetRows, type SheetRowItem } from '../api';
+  import { fetchSheetRows, updateSheetCell, type SheetRowItem } from '../api';
   import {
     FileSpreadsheet,
     RefreshCw,
@@ -40,13 +41,53 @@
     }
   });
 
+  // Inline cell editing: double-click a cell, type, Enter/blur saves straight to the sheet.
+  let editingKey = $state<string | null>(null);
+  let editValue = $state('');
+  let savingKey = $state<string | null>(null);
+  let editError = $state('');
+
+  function startEdit(rowNumber: number, cIdx: number, current: string) {
+    editingKey = `${rowNumber}:${cIdx}`;
+    editValue = current;
+    editError = '';
+  }
+
+  async function commitEdit(rowNumber: number, cIdx: number) {
+    if (editingKey !== `${rowNumber}:${cIdx}`) return;
+    const original = rows.find((r) => r.rowNumber === rowNumber)?.cells[cIdx] || '';
+    const next = editValue.trim();
+    editingKey = null;
+    if (next === original) return;
+
+    savingKey = `${rowNumber}:${cIdx}`;
+    try {
+      await updateSheetCell(spreadsheetId, currentSheet, rowNumber, cIdx, next);
+      const row = rows.find((r) => r.rowNumber === rowNumber);
+      if (row) row.cells[cIdx] = next;
+    } catch (err) {
+      editError = err instanceof Error ? err.message : 'Gagal menyimpan sel.';
+    } finally {
+      savingKey = null;
+    }
+  }
+
+  function cancelEdit() {
+    editingKey = null;
+  }
+
   export async function loadSheetData() {
     if (!spreadsheetId || !currentSheet || !appState.accessToken) return;
     isLoading = true;
     try {
+      // Keep the scan form in step with the sheet (dropdowns, checkboxes, read-only columns).
+      // Fields persist in localStorage, so a stale sync means missing dropdowns forever.
+      syncColumnsFromSheet().catch(() => {});
+
       const data = await fetchSheetRows(spreadsheetId, currentSheet, 500);
       headers = data.headers;
       rows = data.rows;
+      appState.setSheetSnapshot({ headers: data.headers, rows: data.rows });
       lastFetchedTime = new Date().toLocaleTimeString();
     } catch (err) {
       console.warn('Gagal memuat preview sheet:', err);
@@ -156,18 +197,43 @@
                 </td>
                 {#each headers as _, cIdx}
                   {@const val = item.cells[cIdx] || ''}
-                  <td class="py-1.5 px-3 border-r border-zinc-200 dark:border-zinc-800 last:border-r-0 max-w-[220px] truncate" title={val}>
-                    {#if val.startsWith('http://') || val.startsWith('https://')}
+                  {@const cellKey = `${item.rowNumber}:${cIdx}`}
+                  <td
+                    class="py-1.5 px-3 border-r border-zinc-200 dark:border-zinc-800 last:border-r-0 max-w-[220px]"
+                    class:saving={savingKey === cellKey}
+                  >
+                    {#if editingKey === cellKey}
+                      <!-- svelte-ignore a11y_autofocus -->
+                      <input
+                        autofocus
+                        bind:value={editValue}
+                        onblur={() => commitEdit(item.rowNumber, cIdx)}
+                        onkeydown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget as HTMLInputElement).blur(); }
+                          if (e.key === 'Escape') cancelEdit();
+                        }}
+                        class="w-full font-mono-data text-xs px-1 py-0.5 rounded-xs border border-zinc-400 dark:border-zinc-500 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
+                      />
+                    {:else if val.startsWith('http://') || val.startsWith('https://')}
                       <a
                         href={val}
                         target="_blank"
                         rel="noopener noreferrer"
                         class="text-blue-600 dark:text-blue-400 hover:underline truncate block"
+                        title={`${val} — klik ganda untuk edit`}
+                        ondblclick={() => startEdit(item.rowNumber, cIdx, val)}
                       >
                         {val}
                       </a>
                     {:else}
-                      <span class="text-zinc-900 dark:text-zinc-100">{val || '—'}</span>
+                      <button
+                        type="button"
+                        class="text-left w-full truncate text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100/70 dark:hover:bg-zinc-800/50 rounded-xs px-1 -mx-1 transition-colors cursor-text"
+                        title={`${val || '(kosong)'} — klik ganda untuk edit`}
+                        ondblclick={() => startEdit(item.rowNumber, cIdx, val)}
+                      >
+                        {val || '—'}
+                      </button>
                     {/if}
                   </td>
                 {/each}
@@ -179,10 +245,18 @@
     {/if}
   </div>
 
+  {#if editError}
+    <div class="px-3 py-2 border-t border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 text-[11px] text-red-700 dark:text-red-300 flex items-start gap-2">
+      <AlertCircle class="w-3.5 h-3.5 shrink-0 mt-0.5" />
+      <span class="flex-1">{editError}</span>
+      <button type="button" class="underline cursor-pointer" onclick={() => (editError = '')}>tutup</button>
+    </div>
+  {/if}
+
   <!-- Bottom status info -->
   <div class="p-2 border-t border-zinc-200 dark:border-zinc-800/80 bg-zinc-50/70 dark:bg-zinc-950/60 flex items-center justify-between text-[11px] font-mono-data text-zinc-400">
     <span>
-      {rows.length} baris data dimuat
+      {rows.length} baris data dimuat · klik ganda sel untuk edit
       {#if filteredRows.length !== rows.length}
         ({filteredRows.length} cocok)
       {/if}

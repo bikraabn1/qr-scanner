@@ -5,6 +5,8 @@
   import { generateRecordId } from '../utils';
   import { parseDestination } from '../url-parser';
   import { playScanBeep } from '../audio';
+  import { buildSheetIndex, findSkuField, findNameField, type KnownBook } from '../book-index';
+  import { columnLetterToIndex } from '../utils';
   import MediaPreview from './MediaPreview.svelte';
   import type { QRRecord, TestStatus } from '../types';
   import {
@@ -18,7 +20,24 @@
   let { onRecordSubmitted }: { onRecordSubmitted?: () => void } = $props();
 
   // Active fields derived directly from store (guaranteed 100% in sync with Config & Sheet headers)
-  let activeFields = $derived(appState.fields.filter((f) => f.enabled));
+  // Read-only columns (verification verdict) are filled in the sheet by hand, so they are shown
+  // greyed out and never submitted — otherwise a submit would blank whatever the reviewer typed.
+  let activeFields = $derived(appState.fields.filter((f) => f.enabled && !f.readOnly));
+  let readOnlyFields = $derived(appState.fields.filter((f) => f.enabled && f.readOnly));
+  /** Everything shown in the form; read-only columns render greyed out in their real position. */
+  let formFields = $derived(appState.fields.filter((f) => f.enabled));
+
+  /** Current value of a read-only column, taken from the matched sheet row. */
+  function readOnlyValue(field: { id: string }): string {
+    if (!matchedBook) return '';
+    const letter = appState.mappings.find((m) => m.fieldId === field.id)?.columnLetter;
+    if (!letter) return '';
+    try {
+      return (matchedBook.cells[columnLetterToIndex(letter) - 1] ?? '').trim();
+    } catch {
+      return '';
+    }
+  }
 
   // Field values dynamically keyed by field.id
   let formValues = $state<Record<string, any>>({});
@@ -117,12 +136,164 @@
     }
   });
 
-  // Keep pageNumber in sync with page tracker
+  // Push tracker changes INTO the form field only when the tracker itself moved.
+  // A plain two-way effect fights the keyboard: clearing the field snaps back to the old
+  // number before a new digit can be typed, so the page number looks read-only.
+  let lastTrackerPage = appState.currentPage;
   $effect(() => {
-    if (formValues['pageNumber'] !== undefined && formValues['pageNumber'] !== appState.currentPage) {
-      formValues['pageNumber'] = appState.currentPage;
-    }
+    if (appState.currentPage === lastTrackerPage) return;
+    lastTrackerPage = appState.currentPage;
+    formValues['pageNumber'] = appState.currentPage;
   });
+
+  /**
+   * The page field in the form is the same value as the tracker: write through to the store,
+   * otherwise the sync effect above overwrites whatever the user types.
+   */
+  function handlePageInput(e: Event) {
+    const val = parseInt((e.currentTarget as HTMLInputElement).value, 10);
+    if (!isNaN(val) && val > 0) {
+      appState.setPageNumber(val);
+      applyKnownPage();
+    }
+  }
+
+
+
+  // Lookups built from the rows already in the sheet: by SKU, and by page (a book spans many
+  // rows, so the sheet leaves SKU/JUDUL blank on the later pages — both are forward-filled).
+  let sheetIndex = $derived(
+    buildSheetIndex(appState.sheetSnapshot.rows, appState.fields, appState.mappings)
+  );
+  let bookIndex = $derived(sheetIndex.bySku);
+  let skuFieldId = $derived(findSkuField(appState.fields)?.id ?? null);
+  let nameFieldId = $derived(findNameField(appState.fields)?.id ?? null);
+  let matchedBook = $state<KnownBook | null>(null);
+  // Tracks a name we filled ourselves, so a later SKU change can replace it without
+  // clobbering a title the operator typed by hand.
+  let autoFilledName = '';
+
+  /**
+   * When the typed/picked SKU is already in the sheet, fill the book name (and any other
+   * still-empty column) from that row instead of making the operator retype it.
+   */
+  // Headers that are a fixed choice, not free text. Options are read from the sheet itself
+  // (its data-validation dropdown, else the distinct values already in that column) — no hardcoded lists.
+  const CHOICE_HEADER = /kategori|jenis|status|hasil|kondisi|tipe|verifikasi/;
+
+  let columnOptions = $derived.by(() => {
+    const out: Record<string, string[]> = {};
+    const { headers, rows } = appState.sheetSnapshot;
+    if (headers.length === 0) return out;
+
+    for (const field of activeFields) {
+      if (field.options?.length) continue; // sheet validation already gave us the list
+      // A select-typed column with no validation list, or a header that is obviously a fixed choice.
+      if (field.type !== 'select' && !CHOICE_HEADER.test(field.label.toLowerCase())) continue;
+
+      const letter = appState.mappings.find((m) => m.fieldId === field.id)?.columnLetter;
+      if (!letter) continue;
+      let idx: number;
+      try {
+        idx = columnLetterToIndex(letter) - 1;
+      } catch {
+        continue;
+      }
+
+      const seen = new Set<string>();
+      for (const row of rows) {
+        const v = (row.cells[idx] || '').trim();
+        if (v) seen.add(v);
+      }
+      if (seen.size > 0 && seen.size <= 20) out[field.id] = [...seen].sort();
+    }
+    return out;
+  });
+
+  function optionsFor(field: { id: string; options?: string[] }): string[] {
+    return field.options?.length ? field.options : (columnOptions[field.id] ?? []);
+  }
+
+  /** Known SKUs offered as a pick-list, so the operator can choose instead of typing. */
+  let skuOptions = $derived(
+    [...bookIndex.values()].sort((a, b) => a.sku.localeCompare(b.sku)).slice(0, 500)
+  );
+
+  function handleFieldInput(fieldId: string, e: Event) {
+    const value = (e.currentTarget as HTMLInputElement).value;
+    if (fieldId === 'pageNumber') {
+      handlePageInput(e);
+      return;
+    }
+    if (fieldId === skuFieldId) {
+      formValues[fieldId] = value;
+      applyKnownSku();
+    }
+  }
+
+  /** Typing a page that is already in the sheet fills SKU + title from that row. */
+  function applyKnownPage() {
+    const page = String(formValues.pageNumber ?? '').trim();
+    if (!page) return;
+    const book = sheetIndex.byPage.get(page);
+    if (!book) return;
+    if (skuFieldId && !String(formValues[skuFieldId] || '').trim()) formValues[skuFieldId] = book.sku;
+    if (nameFieldId && book.name && !String(formValues[nameFieldId] || '').trim()) {
+      formValues[nameFieldId] = book.name;
+      autoFilledName = book.name;
+    }
+    matchedBook = book;
+  }
+
+  /**
+   * One click copies the columns that repeat for every page of the same book (judul, kategori,
+   * jenis konten, checkbox) from the matched row. Page number and link columns are deliberately
+   * left alone — those differ per row, copying them would be wrong.
+   */
+  function fillChoicesFromRow() {
+    const book = matchedBook;
+    if (!book) return;
+    for (const field of activeFields) {
+      const isChoice = field.type === 'select' || field.type === 'boolean';
+      if (!isChoice && field.id !== nameFieldId) continue;
+      // Never clobber what the operator already typed.
+      if (field.type === 'boolean' ? formValues[field.id] === true : String(formValues[field.id] ?? '').trim()) continue;
+
+      const letter = appState.mappings.find((m) => m.fieldId === field.id)?.columnLetter;
+      if (!letter) continue;
+      let idx: number;
+      try {
+        idx = columnLetterToIndex(letter) - 1;
+      } catch {
+        continue;
+      }
+      const value = (book.cells[idx] ?? '').trim();
+      if (!value) continue;
+
+      if (field.type === 'boolean') {
+        const opts = field.options ?? [];
+        formValues[field.id] = opts.length >= 2 ? value === opts[0] : /^(ya|yes|true|1|centang|✓)$/i.test(value);
+      } else {
+        formValues[field.id] = value;
+      }
+    }
+  }
+
+  function applyKnownSku() {
+    if (!skuFieldId) return;
+    const key = String(formValues[skuFieldId] || '').trim().toLowerCase();
+    const book = key ? bookIndex.get(key) : undefined;
+    matchedBook = book ?? null;
+    if (!book) return;
+
+    if (nameFieldId && book.name) {
+      const current = String(formValues[nameFieldId] || '').trim();
+      if (!current || current === autoFilledName) {
+        formValues[nameFieldId] = book.name;
+        autoFilledName = book.name;
+      }
+    }
+  }
 
   function initDefaultValues() {
     const todayIso = new Date().toISOString().split('T')[0];
@@ -272,6 +443,7 @@
 
     // Set value into the specifically targeted field
     formValues[fieldId] = decodedText.trim();
+    if (fieldId === skuFieldId) applyKnownSku();
 
     setTimeout(() => { frameFlashed = false; }, 350);
     setTimeout(() => { isThrottled = false; }, 1500);
@@ -358,6 +530,13 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+<!-- Existing SKUs from the sheet, offered as a pick-list on the SKU field -->
+<datalist id="known-skus">
+  {#each skuOptions as book (book.sku)}
+    <option value={book.sku}>{book.name}</option>
+  {/each}
+</datalist>
+
 <div class="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-5 shadow-2xs space-y-4 transition-colors">
   <!-- Top bar -->
   <div class="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
@@ -373,7 +552,7 @@
 
   <!-- Pure Dynamic Form Fields (100% In Sync with Config & Sheet Columns) -->
   <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-4">
-    {#each activeFields as field, idx}
+    {#each formFields as field, idx}
       {@const mapping = appState.mappings.find((m) => m.fieldId === field.id)}
       {@const isLink = isLinkField(field)}
       {@const fieldValue = String(formValues[field.id] || '')}
@@ -392,14 +571,20 @@
           {/if}
         </div>
 
-        {#if field.type === 'select'}
+        {#if field.readOnly}
+          <!-- Filled by a human in the sheet afterwards; shown greyed out, never submitted -->
+          <div class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/60 text-zinc-500 dark:text-zinc-400 flex items-center justify-between gap-2">
+            <span class="truncate">{readOnlyValue(field) || 'Diisi manual di Google Sheets'}</span>
+            <span class="text-[9px] uppercase tracking-wider px-1 py-0.5 rounded-xs border border-zinc-300 dark:border-zinc-600 shrink-0">manual</span>
+          </div>
+        {:else if field.type === 'select' || optionsFor(field).length > 0}
           <select
             id={`field-${field.id}`}
             bind:value={formValues[field.id]}
             class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
           >
             <option value="">Pilih opsi...</option>
-            {#each field.options || [] as opt}
+            {#each optionsFor(field) as opt}
               <option value={opt}>{opt}</option>
             {/each}
           </select>
@@ -442,6 +627,8 @@
                 type={field.type === 'number' ? 'number' : field.type === 'url' ? 'url' : 'text'}
                 bind:this={firstInputRef}
                 bind:value={formValues[field.id]}
+                oninput={(e) => handleFieldInput(field.id, e)}
+                list={field.id === skuFieldId ? 'known-skus' : undefined}
                 placeholder={`Ketik ${field.label.toLowerCase()}...`}
                 class="w-full font-mono-data text-xs py-2 pl-3 {isLink ? 'pr-9' : 'pr-3'} rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
               />
@@ -450,6 +637,8 @@
                 id={`field-${field.id}`}
                 type={field.type === 'number' ? 'number' : field.type === 'url' ? 'url' : 'text'}
                 bind:value={formValues[field.id]}
+                oninput={(e) => handleFieldInput(field.id, e)}
+                list={field.id === skuFieldId ? 'known-skus' : undefined}
                 placeholder={`Ketik ${field.label.toLowerCase()}...`}
                 class="w-full font-mono-data text-xs py-2 pl-3 {isLink ? 'pr-9' : 'pr-3'} rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
               />
@@ -471,6 +660,24 @@
               </button>
             {/if}
           </div>
+
+          <!-- Known-SKU hint: one book spans many pages, so a repeat SKU is normal, not a clash -->
+          {#if field.id === skuFieldId && matchedBook}
+            <div class="mt-1 flex items-start gap-1.5 text-[10px] text-emerald-700 dark:text-emerald-400">
+              <CheckCircle2 class="w-3 h-3 shrink-0 mt-0.5" />
+              <span>
+                {matchedBook.name || 'Buku ini'} — sudah ada di baris {matchedBook.rowNumber}
+                ({matchedBook.pages} halaman). Nama buku terisi otomatis; kosongkan jika ingin ganti judul.
+                <button
+                  type="button"
+                  onclick={fillChoicesFromRow}
+                  class="ml-1 underline underline-offset-2 hover:no-underline cursor-pointer"
+                >
+                  Isi kolom pilihan dari baris {matchedBook.rowNumber}
+                </button>
+              </span>
+            </div>
+          {/if}
 
           <!-- Sample Links for quick testing on QR / link columns -->
           {#if isLink && !formValues[field.id]}

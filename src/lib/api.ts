@@ -1,6 +1,7 @@
 import type { AppConfig, ColumnMapping, FieldDefinition, QRRecord } from './types';
 import { buildRowPayload, columnLetterToIndex } from './utils';
 import { appState } from './store.svelte';
+import { requestGoogleAccessToken } from './google-auth';
 
 export interface SubmitResult {
   success: boolean;
@@ -11,6 +12,62 @@ export interface SubmitResult {
 export interface SheetRowItem {
   rowNumber: number;
   cells: string[];
+}
+
+/**
+ * Fetch against the Sheets API with the current token. A 401 is retried once with a freshly
+ * renewed token so an expired token doesn't kick the user back to the login screen mid-session.
+ */
+async function googleFetch(url: string, init: RequestInit = {}, tokenOverride?: string): Promise<Response> {
+  let token = tokenOverride !== undefined ? tokenOverride : appState.accessToken;
+  if (!token) throw new Error('Belum login Google. Silakan klik "Sign in with Google" terlebih dahulu.');
+
+  const send = (t: string) =>
+    fetch(url, {
+      ...init,
+      headers: { ...((init.headers as Record<string, string>) || {}), Authorization: `Bearer ${t}` }
+    });
+
+  const response = await send(token);
+  if (response.status !== 401 || tokenOverride) return response;
+
+  token = await requestGoogleAccessToken(true);
+  return send(token);
+}
+
+/**
+ * Google answers 403 for unrelated causes (API disabled, scope missing, no share access).
+ * Report the real one instead of always blaming spreadsheet permissions.
+ */
+async function throwSheetsError(response: Response, spreadsheetId?: string): Promise<never> {
+  const body = typeof response.text === 'function' ? await response.text().catch(() => '') : '';
+  const reason = body.match(/"reason"\s*:\s*"([^"]+)"/)?.[1] || '';
+  const email = appState.user?.email;
+
+  if (response.status === 401) {
+    appState.signOut();
+    throw new Error('Sesi login Google kedaluwarsa. Silakan Sign in with Google ulang.');
+  }
+  if (response.status === 403) {
+    if (reason === 'SERVICE_DISABLED' || /has not been used in project|is disabled/.test(body)) {
+      throw new Error(
+        'Google Sheets API belum diaktifkan di Google Cloud project milik OAuth Client ID ini. Buka console.cloud.google.com -> APIs & Services -> Library -> "Google Sheets API" -> Enable, tunggu 1-2 menit, lalu coba lagi.'
+      );
+    }
+    if (reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' || /insufficient (authentication )?scopes|insufficientPermissions/.test(body)) {
+      appState.signOut();
+      throw new Error(
+        `Token Google untuk ${email || 'akun ini'} tidak punya izin Google Sheets. Sign in ulang dan centang akses Spreadsheet saat diminta.`
+      );
+    }
+    throw new Error(
+      `Akses Spreadsheet ditolak (403 Forbidden) untuk ${email || 'akun Google Anda'}. Pastikan akun tsb sudah di-share "Editor" di Spreadsheet ini. Detail: ${body.slice(0, 400)}`
+    );
+  }
+  if (response.status === 404) {
+    throw new Error(`Spreadsheet atau tab tidak ditemukan (404). Periksa Spreadsheet ID "${spreadsheetId || ''}" dan nama tab.`);
+  }
+  throw new Error(`Google Sheets API Error (${response.status}): ${body.slice(0, 400)}`);
 }
 
 /**
@@ -81,15 +138,10 @@ export async function findTargetRow(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-  const response = await fetch(endpoint, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: controller.signal
-  });
+  const response = await googleFetch(endpoint, { signal: controller.signal }, token);
   clearTimeout(timeoutId);
 
-  if (!response.ok) {
-    throw new Error(`Gagal membaca kolom ${cleanCol} (${response.status})`);
-  }
+  if (!response.ok) await throwSheetsError(response, cleanId);
 
   const data = await response.json();
   const values: any[][] = data.values || [];
@@ -184,36 +236,19 @@ export async function submitRecord(
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
-      const response = await fetch(batchEndpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
+      const response = await googleFetch(
+        batchEndpoint,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
+          signal: controller.signal
         },
-        body: JSON.stringify({
-          valueInputOption: 'USER_ENTERED',
-          data
-        }),
-        signal: controller.signal
-      });
+        token
+      );
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          appState.signOut();
-          throw new Error('Sesi login Google telah kedaluwarsa. Silakan Sign in with Google ulang.');
-        }
-        if (response.status === 403) {
-          throw new Error(
-            `Akses Spreadsheet ditolak (403 Forbidden). Pastikan akun Google Anda (${appState.user?.email || 'tester'}) sudah di-share hak akses "Editor" pada Google Spreadsheet tersebut.`
-          );
-        }
-        if (response.status === 404) {
-          throw new Error(`Spreadsheet tidak ditemukan (404). Periksa kembali Spreadsheet ID: "${spreadsheetId}".`);
-        }
-        const errText = await response.text();
-        throw new Error(`Google Sheets API Error (${response.status}): ${errText}`);
-      }
+      if (!response.ok) await throwSheetsError(response, spreadsheetId);
 
       return {
         success: true,
@@ -238,37 +273,20 @@ export async function submitRecord(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
+    const response = await googleFetch(
+      endpoint,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [rowArray] }),
+        signal: controller.signal
       },
-      body: JSON.stringify({
-        values: [rowArray]
-      }),
-      signal: controller.signal
-    });
+      token
+    );
 
     clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      if (response.status === 401) {
-        appState.signOut();
-        throw new Error('Sesi login Google telah kedaluwarsa. Silakan Sign in with Google ulang.');
-      }
-      if (response.status === 403) {
-        throw new Error(
-          `Akses Spreadsheet ditolak (403 Forbidden). Pastikan akun Google Anda (${appState.user?.email || 'tester'}) sudah di-share hak akses "Editor" pada Google Spreadsheet tersebut.`
-        );
-      }
-      if (response.status === 404) {
-        throw new Error(`Spreadsheet tidak ditemukan (404). Periksa kembali Spreadsheet ID: "${spreadsheetId}".`);
-      }
-
-      const errText = await response.text();
-      throw new Error(`Google Sheets API Error (${response.status}): ${errText}`);
-    }
+    if (!response.ok) await throwSheetsError(response, spreadsheetId);
 
     const data = await response.json();
     const updatedRange = data.updates?.updatedRange || '';
@@ -321,29 +339,11 @@ export async function fetchSpreadsheetMetadata(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(endpoint, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
-      signal: controller.signal
-    });
+    const response = await googleFetch(endpoint, { signal: controller.signal }, token);
 
     clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      if (response.status === 401) {
-        appState.signOut();
-        throw new Error('Sesi login Google kedaluwarsa. Sign in ulang.');
-      }
-      if (response.status === 403) {
-        throw new Error(`Akses ditolak (403). Akun ${appState.user?.email || 'Google Anda'} belum diberi izin Editor di Spreadsheet ini.`);
-      }
-      if (response.status === 404) {
-        throw new Error('Spreadsheet ID tidak ditemukan di Google Drive.');
-      }
-      const errText = await response.text();
-      throw new Error(`Gagal akses spreadsheet (${response.status}): ${errText}`);
-    }
+    if (!response.ok) await throwSheetsError(response, cleanId);
 
     const data = await response.json();
     const title = data.properties?.title || 'Spreadsheet';
@@ -385,13 +385,11 @@ export async function fetchSheetHeaders(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(endpoint, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal
-    });
+    const response = await googleFetch(endpoint, { signal: controller.signal }, token);
     clearTimeout(timeoutId);
 
-    if (!response.ok) return [];
+    // Read helpers are best-effort, but a permission/API error must be visible
+    if (!response.ok) await throwSheetsError(response, cleanId);
 
     const data = await response.json();
     const rowValues = data.values?.[0] || [];
@@ -425,13 +423,10 @@ export async function fetchSheetValidationRules(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(endpoint, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal
-    });
+    const response = await googleFetch(endpoint, { signal: controller.signal }, token);
     clearTimeout(timeoutId);
 
-    if (!response.ok) return {};
+    if (!response.ok) await throwSheetsError(response, cleanId);
 
     const data = await response.json();
     const rowData = data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || [];
@@ -512,6 +507,43 @@ export function isRealRecord(cells: string[]): boolean {
 /**
  * Fetch rows from the worksheet tab for live preview
  */
+function indexToColumnLetter(index: number): string {
+  let n = index + 1;
+  let out = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    out = String.fromCharCode(65 + rem) + out;
+    n = Math.floor((n - 1) / 26);
+  }
+  return out;
+}
+
+/**
+ * Write a single cell back to the sheet (used by the live preview editor).
+ */
+export async function updateSheetCell(
+  spreadsheetId: string,
+  sheetName: string,
+  rowNumber: number,
+  columnIndex: number,
+  value: string,
+  tokenOverride?: string
+): Promise<void> {
+  const cleanId = spreadsheetId?.trim();
+  const cleanSheet = sheetName?.trim();
+  if (!cleanId || !cleanSheet) throw new Error('Spreadsheet ID atau nama tab kosong.');
+
+  const a1 = formatA1Range(cleanSheet, `${indexToColumnLetter(columnIndex)}${rowNumber}`);
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cleanId)}/values/${encodeURIComponent(a1)}?valueInputOption=USER_ENTERED`;
+
+  const response = await googleFetch(endpoint, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [[value]] })
+  }, tokenOverride);
+  if (!response.ok) await throwSheetsError(response, cleanId);
+}
+
 export async function fetchSheetRows(
   spreadsheetId: string,
   sheetName: string,
@@ -532,13 +564,10 @@ export async function fetchSheetRows(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(endpoint, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal
-    });
+    const response = await googleFetch(endpoint, { signal: controller.signal }, token);
     clearTimeout(timeoutId);
 
-    if (!response.ok) return { headers: [], rows: [] };
+    if (!response.ok) await throwSheetsError(response, cleanId);
 
     const data = await response.json();
     const values: any[][] = data.values || [];
