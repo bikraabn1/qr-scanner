@@ -74,4 +74,22 @@ describe('Sheet Header Synchronization', () => {
     expect(statusField?.options).toEqual(['Cocok', 'Tidak Cocok']);
     expect(statusField?.defaultValue).toBe('Cocok');
   });
+
+  it('keeps a hand-filled verification column read-only and out of the built-in fields', () => {
+    const res = syncFromRowHeaders(
+      ['SKU', 'JUDUL', 'HALAMAN', 'KONTEN INTERNAL TS?', 'HASIL VERIFIKASI'],
+      baseFields,
+      defaultMappings
+    );
+
+    const verdict = res.fields.find((f) => f.label === 'HASIL VERIFIKASI');
+    expect(verdict?.readOnly).toBe(true);
+    expect(verdict?.id).not.toBe('testStatus');
+
+    const internal = res.fields.find((f) => f.label === 'KONTEN INTERNAL TS?');
+    expect(internal?.type).toBe('boolean');
+
+    // No dropdown in the sheet -> no invented options; the UI reads the column's own values.
+    expect(res.fields.find((f) => f.label === 'SKU')?.options).toBeUndefined();
+  });
 });

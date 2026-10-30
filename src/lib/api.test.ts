@@ -5,7 +5,8 @@ import {
   fetchSpreadsheetMetadata,
   buildSheetsRowArray,
   findTargetRow,
-  isRealRecord
+  isRealRecord,
+  updateSheetCell
 } from './api';
 import type { AppConfig, FieldDefinition, ColumnMapping, QRRecord } from './types';
 
@@ -41,6 +42,25 @@ describe('Google Sheets Direct API Integration Layer', () => {
     customFields: {},
     submissionStatus: 'saving'
   };
+
+  it('writes a single cell to the right A1 address', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: any) => {
+      calls.push(`${init?.method || 'GET'} ${url} ${init?.body || ''}`);
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    await updateSheetCell('sheet-1', 'Sheet1', 7, 1, 'Halaman 7', 'tok');
+    const url = calls[0];
+    expect(url).toContain("!B7");
+    expect(url).toContain('valueInputOption=USER_ENTERED');
+    expect(url).toContain('Halaman 7');
+
+    // 26th column must roll over to AA
+    await updateSheetCell('sheet-1', 'Sheet1', 3, 26, 'x', 'tok');
+    expect(calls[1]).toContain('!AA3');
+
+    vi.unstubAllGlobals();
+  });
 
   it('builds zero-indexed row array according to column mappings', () => {
     const row = buildSheetsRowArray(record, fields, mappings);
@@ -154,7 +174,8 @@ describe('Google Sheets Direct API Integration Layer', () => {
       // First call: findTargetRow fails
       .mockResolvedValueOnce({
         ok: false,
-        status: 500
+        status: 500,
+        text: async () => 'backend error'
       })
       // Second call: fallback to append
       .mockResolvedValueOnce({

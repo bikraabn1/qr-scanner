@@ -82,6 +82,12 @@ export class AppState {
   user = $state<GoogleUser | null>(null);
   accessToken = $state<string | null>(null);
 
+  /** Last rows read from the sheet — the scan form reuses them to autofill from a known SKU. */
+  sheetSnapshot = $state<{ headers: string[]; rows: { rowNumber: number; cells: string[] }[] }>({
+    headers: [],
+    rows: []
+  });
+
   constructor() {
     if (typeof window !== 'undefined') {
       this.applyTheme(this.theme);
@@ -117,6 +123,10 @@ export class AppState {
   saveConfig(newConfig: Partial<AppConfig>) {
     this.config = { ...this.config, ...newConfig };
     saveToStorage(STORAGE_KEYS.CONFIG, this.config);
+  }
+
+  setSheetSnapshot(snapshot: { headers: string[]; rows: { rowNumber: number; cells: string[] }[] }) {
+    this.sheetSnapshot = snapshot;
   }
 
   setPageNumber(page: number) {
