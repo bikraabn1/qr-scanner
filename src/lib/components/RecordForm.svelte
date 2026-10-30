@@ -263,7 +263,13 @@
                   bind:checked={customFields[f.id] as boolean}
                   class="rounded border-zinc-300 dark:border-zinc-700 w-4 h-4 text-zinc-900 focus:ring-zinc-900"
                 />
-                <span class="text-xs text-zinc-600 dark:text-zinc-400">Yes / Verified</span>
+                <span class="text-xs text-zinc-600 dark:text-zinc-400">
+                  {#if f.options && f.options.length >= 2}
+                    {customFields[f.id] ? f.options[0] : f.options[1]}
+                  {:else}
+                    Yes / Verified
+                  {/if}
+                </span>
               </div>
             {:else}
               <input

@@ -97,6 +97,17 @@ export function getFieldValue(
     return raw.split('T')[0];
   }
 
+  // Handle boolean / checkbox fields with custom cell values (e.g. ['Ya', 'Bukan'] or standard boolean)
+  if (fieldDef?.type === 'boolean') {
+    const isChecked = Boolean(raw === true || raw === 'true' || raw === 'TRUE' || raw === 1 || raw === '1');
+    if (fieldDef.options && fieldDef.options.length >= 2) {
+      return isChecked ? fieldDef.options[0] : fieldDef.options[1];
+    } else if (fieldDef.options && fieldDef.options.length === 1) {
+      return isChecked ? fieldDef.options[0] : '';
+    }
+    return isChecked; // native boolean for Google Sheets checkbox
+  }
+
   return raw;
 }
 

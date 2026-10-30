@@ -106,4 +106,28 @@ describe('Payload Mapper', () => {
     expect(getFieldValue(record, 'custom_section')).toBe('Chapter 4 Header');
     expect(getFieldValue(record, 'non_existent')).toBe('');
   });
+
+  it('handles boolean checkboxes with native boolean and custom values', () => {
+    const boolField: FieldDefinition = {
+      id: 'custom_check',
+      label: 'Is TS Internal',
+      type: 'boolean',
+      required: false,
+      enabled: true
+    };
+    const recChecked = { ...record, customFields: { custom_check: true } };
+    const recUnchecked = { ...record, customFields: { custom_check: false } };
+
+    // Standard checkbox without custom values -> native boolean
+    expect(getFieldValue(recChecked, 'custom_check', boolField)).toBe(true);
+    expect(getFieldValue(recUnchecked, 'custom_check', boolField)).toBe(false);
+
+    // Checkbox with custom values (e.g. ['Ya', 'Bukan'])
+    const customBoolField: FieldDefinition = {
+      ...boolField,
+      options: ['Ya', 'Bukan']
+    };
+    expect(getFieldValue(recChecked, 'custom_check', customBoolField)).toBe('Ya');
+    expect(getFieldValue(recUnchecked, 'custom_check', customBoolField)).toBe('Bukan');
+  });
 });

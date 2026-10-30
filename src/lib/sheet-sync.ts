@@ -150,14 +150,19 @@ export function syncFromRowHeaders(
     } else {
       // Create custom field specifically for this spreadsheet column
       const slug = 'custom_' + header.toLowerCase().replace(/[^a-z0-9]/g, '_');
-      const hasDropdown = colRule?.options && colRule.options.length > 0;
+      const isBoolean = colRule?.type === 'boolean';
+      const hasDropdown = !isBoolean && colRule?.options && colRule.options.length > 0;
 
       const newField: FieldDefinition = {
         id: slug + '_' + (index + 1),
         label: header,
-        type: hasDropdown ? 'select' : (colRule?.type || 'text'),
-        options: hasDropdown ? colRule!.options : undefined,
-        defaultValue: hasDropdown && colRule!.options ? colRule!.options[0] : undefined,
+        type: isBoolean ? 'boolean' : hasDropdown ? 'select' : (colRule?.type || 'text'),
+        options: colRule?.options,
+        defaultValue: isBoolean
+          ? false
+          : hasDropdown && colRule!.options
+            ? colRule!.options[0]
+            : undefined,
         required: false,
         enabled: true,
         isBuiltIn: false

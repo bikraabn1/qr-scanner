@@ -470,7 +470,17 @@ export async function fetchSheetValidationRules(
         } else if (condType.startsWith('DATE_')) {
           rules[index] = { type: 'date' };
         } else if (condType === 'BOOLEAN') {
-          rules[index] = { type: 'boolean' };
+          // Check if custom checkbox values are configured (e.g. ['Ya', 'Bukan'])
+          const customValues = Array.isArray(condition.values)
+            ? condition.values
+                .map((v: any) => v?.userEnteredValue)
+                .filter((v: any) => v !== undefined && v !== null && String(v).trim().length > 0)
+                .map((v: any) => String(v).trim())
+            : [];
+          rules[index] = {
+            type: 'boolean',
+            options: customValues.length > 0 ? customValues : undefined
+          };
         } else if (condType.startsWith('NUMBER_')) {
           rules[index] = { type: 'number' };
         }

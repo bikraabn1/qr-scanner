@@ -416,9 +416,15 @@
             <input
               type="checkbox"
               bind:checked={formValues[field.id]}
-              class="rounded-sm border-zinc-300 text-zinc-900"
+              class="rounded-sm border-zinc-300 text-zinc-900 w-4 h-4"
             />
-            <span>Centang jika valid / terkonfirmasi</span>
+            <span>
+              {#if field.options && field.options.length >= 2}
+                {formValues[field.id] ? field.options[0] : field.options[1]}
+              {:else}
+                Centang jika aktif / valid
+              {/if}
+            </span>
           </label>
         {:else if field.type === 'date' || field.type === 'datetime'}
           <input
