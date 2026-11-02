@@ -15,7 +15,8 @@
     CameraOff,
     CheckCircle2,
     AlertCircle,
-    Undo2
+    Undo2,
+    RotateCcw
   } from '@lucide/svelte';
 
   let { onRecordSubmitted }: { onRecordSubmitted?: () => void } = $props();
@@ -342,6 +343,11 @@
     }
   }
 
+  function handleClearForm() {
+    stopCamera();
+    initDefaultValues();
+  }
+
   onDestroy(() => {
     stopCamera();
     clearUndoTimer();
@@ -525,20 +531,6 @@
       onRecordSubmitted?.();
 
       startUndoCountdown(newRecord);
-
-      // Auto clear input fields (retain page number and today date)
-      const todayIso = new Date().toISOString().split('T')[0];
-      for (const f of activeFields) {
-        if (f.id !== 'pageNumber') {
-          if (f.type === 'boolean') {
-            formValues[f.id] = false;
-          } else if (f.type === 'date') {
-            formValues[f.id] = todayIso;
-          } else {
-            formValues[f.id] = '';
-          }
-        }
-      }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Gagal menyimpan ke Google Sheets';
       appState.updateRecordStatus(newRecord.recordId, 'failed', errMsg);
@@ -782,22 +774,34 @@
       </div>
     {/if}
 
-    <!-- Submit Button -->
+    <!-- Submit & Clear Buttons -->
     <div class="pt-2">
-      <button
-        type="submit"
-        disabled={isSubmitting || !!disabledReason}
-        class="w-full flex items-center justify-center gap-2 py-2.5 px-4 text-xs font-bold rounded-sm bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-        title={disabledReason || 'Kirim baris ke Google Sheets (Ctrl+Enter)'}
-      >
-        {#if isSubmitting}
-          <div class="w-3.5 h-3.5 border-2 border-white/40 dark:border-black/40 border-t-white dark:border-t-black rounded-full animate-spin"></div>
-          <span>Menyimpan ke Sheets...</span>
-        {:else}
-          <span>Kirim Baris ke Google Sheets</span>
-          <kbd class="hidden sm:inline-block text-[10px] opacity-60 font-mono-data ml-1">Ctrl+Enter</kbd>
-        {/if}
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          onclick={handleClearForm}
+          class="flex items-center justify-center gap-1.5 py-2.5 px-3.5 text-xs font-semibold rounded-sm border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+          title="Kosongkan form input"
+        >
+          <RotateCcw class="w-3.5 h-3.5" />
+          <span>Clear</span>
+        </button>
+
+        <button
+          type="submit"
+          disabled={isSubmitting || !!disabledReason}
+          class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 text-xs font-bold rounded-sm bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          title={disabledReason || 'Kirim baris ke Google Sheets (Ctrl+Enter)'}
+        >
+          {#if isSubmitting}
+            <div class="w-3.5 h-3.5 border-2 border-white/40 dark:border-black/40 border-t-white dark:border-t-black rounded-full animate-spin"></div>
+            <span>Menyimpan ke Sheets...</span>
+          {:else}
+            <span>Kirim Baris ke Google Sheets</span>
+            <kbd class="hidden sm:inline-block text-[10px] opacity-60 font-mono-data ml-1">Ctrl+Enter</kbd>
+          {/if}
+        </button>
+      </div>
 
       {#if disabledReason}
         <p class="text-[11px] text-zinc-400 dark:text-zinc-500 font-mono-data text-center mt-1.5">
