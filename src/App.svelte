@@ -3,7 +3,6 @@
   import { appState } from './lib/store.svelte';
   import { initAuthSession } from './lib/google-auth';
   import Header from './lib/components/Header.svelte';
-  import PageTracker from './lib/components/PageTracker.svelte';
   import Workspace from './lib/components/Workspace.svelte';
   import SpreadsheetPreview from './lib/components/SpreadsheetPreview.svelte';
   import SettingsView from './lib/components/SettingsView.svelte';
@@ -54,9 +53,6 @@
     <!-- Main Container: Unified max-width across Console and Config (~1240px) -->
     <main class="flex-1 w-full max-w-[1240px] mx-auto px-4 sm:px-6 py-6 space-y-6">
       {#if currentView === 'testing'}
-        <!-- Slim Session Bar: Page Stepper & Session Scan Counter -->
-        <PageTracker />
-
         <!-- Testing Workspace Grid: ~5/12 for Pure Inputs & 7/12 for Live Sheet Preview -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           <!-- Left: Pure Input Console (Synced 100% with Config & Sheet Columns) -->

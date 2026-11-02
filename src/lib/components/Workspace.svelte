@@ -118,13 +118,6 @@
     }
   });
 
-  // Keep pageNumber in sync with page tracker
-  $effect(() => {
-    if (formValues['pageNumber'] !== undefined && formValues['pageNumber'] !== appState.currentPage) {
-      formValues['pageNumber'] = appState.currentPage;
-    }
-  });
-
   function initDefaultValues() {
     const todayIso = new Date().toISOString().split('T')[0];
     const nowIso = new Date().toISOString().slice(0, 16);
@@ -298,9 +291,14 @@
       }
     }
 
+    const pageNum = formValues['pageNumber'] ? Number(formValues['pageNumber']) : appState.currentPage;
+    if (!isNaN(pageNum) && pageNum > 0) {
+      appState.setPageNumber(pageNum);
+    }
+
     const newRecord: QRRecord = {
       recordId: generateRecordId(),
-      pageNumber: formValues['pageNumber'] ? Number(formValues['pageNumber']) : appState.currentPage,
+      pageNumber: pageNum,
       qrContent: String(formValues['qrContent'] || formValues[activeFields[0]?.id] || '').trim(),
       testStatus: (formValues['testStatus'] || 'PASS') as TestStatus,
       notes: String(formValues['notes'] || '').trim(),

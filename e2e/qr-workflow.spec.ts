@@ -15,13 +15,10 @@ test.describe('QR Book Tester Workflow', () => {
       window.__appState?.setAuth({ email: 'tester@org.com', name: 'Tester QA' }, 'mock-oauth-token-xyz');
     });
 
-    // 3. Verify console dashboard & Page Tracker is now unlocked
-    const pageInput = page.getByLabel('Book page number input');
+    // 3. Verify console dashboard is now unlocked
+    await expect(page.locator('text=Testing Input Console')).toBeVisible();
+    const pageInput = page.locator('#field-pageNumber');
     await expect(pageInput).toHaveValue('1');
-
-    // Click +5 button
-    await page.getByRole('button', { name: '+5' }).click();
-    await expect(pageInput).toHaveValue('6');
 
     // 4. Verify live spreadsheet preview section is present
     await expect(page.locator('text=Sheet Live Preview')).toBeVisible();
@@ -40,7 +37,7 @@ test.describe('QR Book Tester Workflow', () => {
 
     // 6. Return to Testing Console
     await page.getByRole('button', { name: /Console/ }).click();
-    await expect(page.locator('text=Book Page Tracker')).toBeVisible();
+    await expect(page.locator('text=Testing Input Console')).toBeVisible();
 
     // Verify Clear button is present
     const clearBtn = page.getByRole('button', { name: 'Clear' });
