@@ -39,9 +39,17 @@ test.describe('QR Book Tester Workflow', () => {
     await page.getByRole('button', { name: /Console/ }).click();
     await expect(page.locator('text=Testing Input Console')).toBeVisible();
 
-    // Verify Clear button is present
-    const clearBtn = page.getByRole('button', { name: 'Clear' });
-    await expect(clearBtn).toBeVisible();
+    // Verify Clear All button is present
+    const clearAllBtn = page.getByRole('button', { name: 'Clear All' });
+    await expect(clearAllBtn).toBeVisible();
+
+    // Verify per-column Clear button works
+    const fieldInput = page.locator('#field-pageNumber');
+    await expect(fieldInput).toHaveValue('1');
+    const colClearBtn = page.getByRole('button', { name: 'Kosongkan kolom Page Number' });
+    await expect(colClearBtn).toBeVisible();
+    await colClearBtn.click();
+    await expect(fieldInput).toHaveValue('');
 
     // 7. Toggle Theme
     const themeBtn = page.getByRole('button', { name: 'Toggle dark/light theme' });

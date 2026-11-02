@@ -142,6 +142,24 @@
     initDefaultValues();
   }
 
+  function hasFieldValue(field: { id: string; type: string }): boolean {
+    const val = formValues[field.id];
+    if (val === undefined || val === null || val === '') return false;
+    if (field.type === 'boolean' && !val) return false;
+    return true;
+  }
+
+  function clearSingleField(field: { id: string; type: string }) {
+    if (scanningFieldId === field.id) {
+      stopCamera();
+    }
+    if (field.type === 'boolean') {
+      formValues[field.id] = false;
+    } else {
+      formValues[field.id] = '';
+    }
+  }
+
   onDestroy(() => {
     stopCamera();
     clearUndoTimer();
@@ -375,11 +393,24 @@
             {field.label}
             {#if field.required}<span class="text-red-500 ml-0.5">*</span>{/if}
           </label>
-          {#if mapping?.columnLetter}
-            <span class="text-[10px] font-mono-data px-1.5 py-0.2 rounded-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700" title={`Kolom ${mapping.columnLetter} di Google Sheets`}>
-              Kolom {mapping.columnLetter}
-            </span>
-          {/if}
+          <div class="flex items-center gap-1.5">
+            {#if hasFieldValue(field)}
+              <button
+                type="button"
+                onclick={() => clearSingleField(field)}
+                aria-label={`Kosongkan kolom ${field.label}`}
+                class="text-[10px] font-mono-data px-1.5 py-0.2 rounded-xs text-zinc-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                title={`Kosongkan kolom ${field.label}`}
+              >
+                Clear
+              </button>
+            {/if}
+            {#if mapping?.columnLetter}
+              <span class="text-[10px] font-mono-data px-1.5 py-0.2 rounded-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700" title={`Kolom ${mapping.columnLetter} di Google Sheets`}>
+                Kolom {mapping.columnLetter}
+              </span>
+            {/if}
+          </div>
         </div>
 
         {#if field.type === 'select'}
@@ -544,10 +575,10 @@
           type="button"
           onclick={handleClearForm}
           class="flex items-center justify-center gap-1.5 py-2.5 px-3.5 text-xs font-semibold rounded-sm border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-          title="Kosongkan form input"
+          title="Kosongkan seluruh kolom input"
         >
           <RotateCcw class="w-3.5 h-3.5" />
-          <span>Clear</span>
+          <span>Clear All</span>
         </button>
 
         <button
