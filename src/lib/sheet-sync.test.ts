@@ -97,4 +97,19 @@ describe('Sheet Header Synchronization', () => {
     // No dropdown in the sheet -> no invented options; the UI reads the column's own values.
     expect(res.fields.find((f) => f.label === 'SKU')?.options).toBeUndefined();
   });
+
+  it('keeps a fixed-choice column a dropdown even without sheet validation', () => {
+    const res = syncFromRowHeaders(
+      ['SKU', 'JUDUL', 'KATEGORI', 'HALAMAN', 'LINK QR', 'JENIS KONTEN'],
+      baseFields,
+      defaultMappings
+    );
+
+    // A free-text input would let a typo overwrite "Youtube"/"Video" in the sheet.
+    expect(res.fields.find((f) => f.label === 'JENIS KONTEN')?.type).toBe('select');
+    expect(res.fields.find((f) => f.label === 'KATEGORI')?.type).toBe('select');
+    // Free-text columns stay free text.
+    expect(res.fields.find((f) => f.label === 'SKU')?.type).toBe('text');
+    expect(res.fields.find((f) => f.label === 'JUDUL')?.type).toBe('text');
+  });
 });

@@ -26,6 +26,12 @@ const BOOLEAN_HEADERS = [/internal/, /\bts\b/, /boolean/];
 /** Sentence-long answers, which need a textarea rather than a single-line input. */
 const LONG_TEXT_HEADERS = [/cross\s*check/, /catatan/, /seharusnya/, /\bactual\b/, /keterangan/];
 
+/**
+ * Fixed-choice columns (JENIS KONTEN holds Youtube/Video). Even without a data-validation rule
+ * they must stay a dropdown: a free-text input lets a typo overwrite the sheet's own value.
+ */
+const CHOICE_HEADERS = [/jenis/, /kategori/, /tipe\b/, /\btype\b/, /kondisi/];
+
 function isReadOnlyHeader(header: string): boolean {
   const norm = header.toLowerCase().replace(/[^a-z0-9]/g, ' ');
   return READ_ONLY_HEADERS.some((re) => re.test(norm));
@@ -182,7 +188,9 @@ export function syncFromRowHeaders(
           ? 'longtext'
           : BOOLEAN_HEADERS.some((re) => re.test(normHeader))
             ? 'boolean'
-            : 'text');
+            : CHOICE_HEADERS.some((re) => re.test(normHeader))
+              ? 'select'
+              : 'text');
       const isBoolean = rawType === 'boolean';
       const hasDropdown = !isBoolean && !!options && options.length > 0;
 

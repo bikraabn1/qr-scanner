@@ -501,7 +501,8 @@
     const newRecord: QRRecord = {
       recordId: generateRecordId(),
       pageNumber: formValues['pageNumber'] ? Number(formValues['pageNumber']) : appState.currentPage,
-      qrContent: String(formValues['qrContent'] || formValues[activeFields[0]?.id] || '').trim(),
+      // Jangan fallback ke kolom lain: LINK QR kosong harus tetap kosong, bukan terisi SKU.
+      qrContent: String(formValues['qrContent'] || '').trim(),
       testStatus: (formValues['testStatus'] || 'PASS') as TestStatus,
       notes: String(formValues['notes'] || '').trim(),
       scannedAt: formValues['scannedAt'] ? String(formValues['scannedAt']) : new Date().toISOString(),
