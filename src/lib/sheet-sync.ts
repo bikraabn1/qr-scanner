@@ -136,7 +136,10 @@ export function syncFromRowHeaders(
   // When sheet has real header content, start with empty fields list (only keep matched built-ins or created custom fields)
   const fields: FieldDefinition[] = [];
 
-  headers.forEach((header, index) => {
+  headers.forEach((rawHeader, index) => {
+    // The book-code column often has no header at all (A1 blank, codes from A2 down). Skipping it
+    // dropped SKU from the form entirely, so the leading blank column is named after its role.
+    const header = rawHeader || (index === 0 ? 'SKU' : '');
     if (!header) return; // skip completely empty column
     const colLetter = columnIndexToLetter(index + 1);
     const colRule = validationRules ? validationRules[index] : undefined;

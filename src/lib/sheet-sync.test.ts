@@ -98,6 +98,19 @@ describe('Sheet Header Synchronization', () => {
     expect(res.fields.find((f) => f.label === 'SKU')?.options).toBeUndefined();
   });
 
+  it('keeps the leading unnamed code column as SKU instead of dropping it', () => {
+    // The real sheet has A1 blank; the book code lives in A2:A. Dropping it removed SKU from the form.
+    const res = syncFromRowHeaders(
+      ['', 'JUDUL', 'KATEGORI', 'HALAMAN', 'LINK QR', 'JENIS KONTEN'],
+      baseFields,
+      defaultMappings
+    );
+
+    const sku = res.fields.find((f) => f.label === 'SKU');
+    expect(sku?.type).toBe('text');
+    expect(res.mappings.find((m) => m.fieldId === sku?.id)?.columnLetter).toBe('A');
+  });
+
   it('keeps a fixed-choice column a dropdown even without sheet validation', () => {
     const res = syncFromRowHeaders(
       ['SKU', 'JUDUL', 'KATEGORI', 'HALAMAN', 'LINK QR', 'JENIS KONTEN'],
