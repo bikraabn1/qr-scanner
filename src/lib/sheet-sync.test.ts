@@ -77,7 +77,7 @@ describe('Sheet Header Synchronization', () => {
 
   it('keeps a hand-filled verification column read-only and out of the built-in fields', () => {
     const res = syncFromRowHeaders(
-      ['SKU', 'JUDUL', 'HALAMAN', 'KONTEN INTERNAL TS?', 'HASIL VERIFIKASI'],
+      ['SKU', 'JUDUL', 'HALAMAN', 'KONTEN INTERNAL TS?', 'HASIL VERIFIKASI', 'HASIL CROSS CHECK TS READER'],
       baseFields,
       defaultMappings
     );
@@ -85,6 +85,11 @@ describe('Sheet Header Synchronization', () => {
     const verdict = res.fields.find((f) => f.label === 'HASIL VERIFIKASI');
     expect(verdict?.readOnly).toBe(true);
     expect(verdict?.id).not.toBe('testStatus');
+
+    // The cross-check column is the operator's own answer — editable, and long enough for a sentence.
+    const crossCheck = res.fields.find((f) => f.label === 'HASIL CROSS CHECK TS READER');
+    expect(crossCheck?.readOnly).toBeFalsy();
+    expect(crossCheck?.type).toBe('longtext');
 
     const internal = res.fields.find((f) => f.label === 'KONTEN INTERNAL TS?');
     expect(internal?.type).toBe('boolean');

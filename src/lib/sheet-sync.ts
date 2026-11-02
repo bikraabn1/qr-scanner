@@ -15,13 +15,16 @@ export interface SyncHeadersResult {
 }
 
 /**
- * Columns a human fills in the sheet afterwards (verification verdict). Options/types still come
+ * Columns a human fills in the sheet afterwards (the reviewer's verdict). Options/types still come
  * from the sheet's own data validation — only the read-only rule lives here.
  */
-const READ_ONLY_HEADERS = [/hasil.*verifikasi/, /cross\s*check/];
+const READ_ONLY_HEADERS = [/hasil.*verifikasi/];
 
 /** Yes/no columns — a checkbox reads better than a text box even without sheet validation. */
 const BOOLEAN_HEADERS = [/internal/, /\bts\b/, /boolean/];
+
+/** Sentence-long answers, which need a textarea rather than a single-line input. */
+const LONG_TEXT_HEADERS = [/cross\s*check/, /catatan/, /seharusnya/, /\bactual\b/, /keterangan/];
 
 function isReadOnlyHeader(header: string): boolean {
   const norm = header.toLowerCase().replace(/[^a-z0-9]/g, ' ');
@@ -135,10 +138,12 @@ export function syncFromRowHeaders(
     // A verification verdict column is filled by hand in the sheet, so it must stay a plain
     // custom read-only column — never the built-in "test status" field, which is submitted.
     const readOnly = isReadOnlyHeader(header);
+    const normHeader = header.toLowerCase().replace(/[^a-z0-9]/g, ' ');
+    // Sentence columns also stay custom: "HASIL CROSS CHECK TS READER" contains "hasil", which
+    // identifyField would otherwise swallow into the built-in "test status" dropdown.
+    const isLongText = LONG_TEXT_HEADERS.some((re) => re.test(normHeader));
 
-    // Try matching to built-in field first (a read-only verdict column stays custom: it must
-    // never collapse into the built-in "test status" field, which the operator does submit)
-    const matchedBuiltInId = readOnly ? null : identifyField(header);
+    const matchedBuiltInId = readOnly || isLongText ? null : identifyField(header);
     const existingBuiltIn = currentFields.find((f) => f.id === matchedBuiltInId);
 
     if (existingBuiltIn && !assignedFieldIds.has(existingBuiltIn.id)) {
@@ -170,8 +175,14 @@ export function syncFromRowHeaders(
       // Create custom field specifically for this spreadsheet column
       const slug = 'custom_' + header.toLowerCase().replace(/[^a-z0-9]/g, '_');
       const options = colRule?.options?.length ? colRule.options : undefined;
-      const normHeader = header.toLowerCase().replace(/[^a-z0-9]/g, ' ');
-      const rawType = colRule?.type || (BOOLEAN_HEADERS.some((re) => re.test(normHeader)) ? 'boolean' : 'text');
+      // Long-text first: "HASIL CROSS CHECK TS READER" contains "ts" but is a sentence, not a checkbox.
+      const rawType =
+        colRule?.type ||
+        (LONG_TEXT_HEADERS.some((re) => re.test(normHeader))
+          ? 'longtext'
+          : BOOLEAN_HEADERS.some((re) => re.test(normHeader))
+            ? 'boolean'
+            : 'text');
       const isBoolean = rawType === 'boolean';
       const hasDropdown = !isBoolean && !!options && options.length > 0;
 
