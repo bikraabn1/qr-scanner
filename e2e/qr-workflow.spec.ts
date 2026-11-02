@@ -42,6 +42,10 @@ test.describe('QR Book Tester Workflow', () => {
     await page.getByRole('button', { name: /Console/ }).click();
     await expect(page.locator('text=Book Page Tracker')).toBeVisible();
 
+    // Verify Clear button is present
+    const clearBtn = page.getByRole('button', { name: 'Clear' });
+    await expect(clearBtn).toBeVisible();
+
     // 7. Toggle Theme
     const themeBtn = page.getByRole('button', { name: 'Toggle dark/light theme' });
     await themeBtn.click();
