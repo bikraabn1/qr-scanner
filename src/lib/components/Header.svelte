@@ -22,7 +22,9 @@
 </script>
 
 <header class="border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] sticky top-0 z-30">
-  <div class="max-w-[1240px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+  <div
+    class="max-w-[1240px] mx-auto px-4 sm:px-6 min-h-14 py-2 sm:py-0 flex flex-wrap sm:flex-nowrap items-center justify-between gap-x-3 gap-y-2"
+  >
     <!-- Brand + which sheet this session writes to -->
     <div class="flex items-baseline gap-3 min-w-0">
       <span class="text-[13px] font-semibold tracking-tight text-[var(--text-primary)] shrink-0">
@@ -111,11 +113,13 @@
           </span>
           <button
             type="button"
-            class="p-0.5 text-[var(--text-tertiary)] hover:text-[#b3261e] transition-colors cursor-pointer"
+            class="inline-flex items-center gap-1 px-1.5 py-1 rounded-[3px] text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[#b3261e] hover:bg-[var(--surface-raised)] transition-colors cursor-pointer shrink-0"
             title={`Keluar (${appState.user.email})`}
+            aria-label="Keluar"
             onclick={logoutGoogle}
           >
             <LogOut class="w-3.5 h-3.5" />
+            <span>Keluar</span>
           </button>
         </div>
       {:else}
