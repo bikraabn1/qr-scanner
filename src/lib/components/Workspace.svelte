@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { appState } from '../store.svelte';
   import { submitRecord } from '../api';
-  import { generateRecordId, yesNoLabels } from '../utils';
+  import { generateRecordId, yesNoLabels, isYoutubeUrl, YOUTUBE_CROSSCHECK } from '../utils';
   import { parseDestination } from '../url-parser';
   import { playScanBeep } from '../audio';
   import { buildSheetIndex, findSkuField, findNameField, type KnownBook } from '../book-index';
@@ -93,6 +93,29 @@
       norm.includes('web')
     );
   }
+
+  /**
+   * "HASIL CROSS CHECK TS READER" is the operator's answer about what the reader shows. A YouTube
+   * link always means the same thing, so it is filled in automatically — and only overwritten while
+   * it still holds our own auto text, never a sentence the operator typed.
+   */
+  let autoCrosscheck = '';
+  $effect(() => {
+    const crosscheck = activeFields.find((f) => /cross\s*check/i.test(f.label));
+    if (!crosscheck) return;
+    const hasYoutube = activeFields.some(
+      (f) => isLinkField(f) && isYoutubeUrl(String(formValues[f.id] ?? ''))
+    );
+    const current = String(formValues[crosscheck.id] ?? '').trim();
+    if (hasYoutube) {
+      if (current && current !== autoCrosscheck) return; // operator's own wording wins
+      if (current !== YOUTUBE_CROSSCHECK) formValues[crosscheck.id] = YOUTUBE_CROSSCHECK;
+      autoCrosscheck = YOUTUBE_CROSSCHECK;
+    } else if (current && current === autoCrosscheck) {
+      formValues[crosscheck.id] = '';
+      autoCrosscheck = '';
+    }
+  });
 
   // Validation
   let disabledReason = $derived.by(() => {

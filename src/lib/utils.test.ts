@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  isYoutubeUrl,
+  YOUTUBE_CROSSCHECK,
   columnIndexToLetter,
   columnLetterToIndex,
   isValidColumnLetter,
@@ -42,7 +44,21 @@ describe('Column Index & Letter Utilities', () => {
   });
 });
 
-describe('URL and ID utilities', () => {
+describe('youtube crosscheck', () => {
+  it('detects youtube links in every form the sheet holds', () => {
+    expect(isYoutubeUrl('https://youtu.be/4MwWm7Dj1rQ?si=DyemzhNU')).toBe(true);
+    expect(isYoutubeUrl('https://youtube.com/shorts/nCTk65CGWeg')).toBe(true);
+    expect(isYoutubeUrl('https://www.youtube.com/watch?v=abc')).toBe(true);
+    expect(isYoutubeUrl('youtu.be/abc')).toBe(true);
+    expect(isYoutubeUrl('https://media.tigaserangkai.com/384544043964')).toBe(false);
+    expect(isYoutubeUrl('')).toBe(false);
+  });
+
+  it('states the reader result in the exact wording the sheet expects', () => {
+    expect(YOUTUBE_CROSSCHECK).toBe('Menampilkan video youtube yang sama');
+  });
+});
+  describe('URL and ID utilities', () => {
   it('generates unique non-empty record IDs', () => {
     const id1 = generateRecordId();
     const id2 = generateRecordId();

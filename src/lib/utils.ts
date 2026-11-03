@@ -16,6 +16,16 @@ export function yesNoLabels(options: string[] | undefined): { yes?: string; no?:
 }
 
 /**
+ * YouTube link detection — youtu.be, youtube.com/watch, /shorts, /embed, with or without scheme.
+ */
+export function isYoutubeUrl(url: string): boolean {
+  return /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i.test((url || '').trim());
+}
+
+/** What the reader must show when the scanned/entered link is a YouTube video. */
+export const YOUTUBE_CROSSCHECK = 'Menampilkan video youtube yang sama';
+
+/**
  * Generate a unique random ID for records (idempotency key)
  */
 export function generateRecordId(): string {
