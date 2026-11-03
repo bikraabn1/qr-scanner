@@ -29,6 +29,27 @@
   /** Everything shown in the form; read-only columns render greyed out in their real position. */
   let formFields = $derived(appState.fields.filter((f) => f.enabled));
 
+  /**
+   * Group columns into the three things the operator actually does: identify the book, confirm the
+   * link content, then record the verdict. Order inside a group follows the sheet's column order.
+   */
+  const GROUPS: { title: string; test: RegExp }[] = [
+    { title: 'Buku', test: /sku|judul|kategori|halaman|page|title|penulis|author/i },
+    { title: 'Tautan dan konten', test: /link|url|qr|jenis|content|konten|tautan/i },
+    { title: 'Hasil uji', test: /.*/ }
+  ];
+  let groupedFields = $derived.by(() => {
+    const buckets = GROUPS.map((g) => ({ title: g.title, fields: [] as typeof formFields }));
+    for (const f of formFields) {
+      const idx = GROUPS.findIndex((g) => g.test.test(f.label));
+      (buckets[idx === -1 ? buckets.length - 1 : idx]).fields.push(f);
+    }
+    return buckets.filter((b) => b.fields.length > 0);
+  });
+
+  /** Keyboard focus lands on the first field the operator must fill. */
+  let firstFieldId = $derived(formFields.find((f) => !f.readOnly)?.id);
+
   /** Current value of a read-only column, taken from the matched sheet row. */
   function readOnlyValue(field: { id: string }): string {
     if (!matchedBook) return '';
@@ -53,8 +74,6 @@
   let html5QrCodeInstance: any = null;
   let isThrottled = false;
   let frameFlashed = $state(false);
-
-  let firstInputRef = $state<HTMLInputElement | null>(null);
 
   // Undo state (5 seconds)
   let lastSubmittedRecord = $state<QRRecord | null>(null);
@@ -134,7 +153,8 @@
 
   onMount(() => {
     initDefaultValues();
-    firstInputRef?.focus();
+    // Focus the first field the operator has to fill, whatever order the sheet columns arrive in.
+    setTimeout(() => document.getElementById(`field-${firstFieldId}`)?.focus(), 0);
   });
 
   // Watch fields and keep form values initialized
@@ -583,215 +603,209 @@
   {/each}
 </datalist>
 
-<div class="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-5 shadow-2xs space-y-4 transition-colors">
-  <!-- Top bar -->
-  <div class="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
-    <div class="flex items-center gap-2">
-      <span class="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100 font-mono-data">
-        Testing Input Console
-      </span>
-      <span class="text-[11px] font-mono-data text-zinc-400">
-        ({activeFields.length} kolom aktif)
-      </span>
-    </div>
+<div class="bg-[var(--surface-panel)] border border-[var(--border-subtle)] rounded-md transition-colors">
+  <!-- Panel header: what this panel does, in one line -->
+  <div class="flex items-baseline justify-between gap-3 px-5 pt-4 pb-3 border-b border-[var(--border-subtle)]">
+    <h2 class="text-sm font-semibold text-[var(--text-primary)]">Input hasil uji</h2>
+    <span class="text-[11px] text-[var(--text-tertiary)]">
+      {activeFields.length} kolom dikirim ke sheet
+    </span>
   </div>
 
-  <!-- Pure Dynamic Form Fields (100% In Sync with Config & Sheet Columns) -->
-  <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-4">
-    {#each formFields as field, idx}
-      {@const mapping = appState.mappings.find((m) => m.fieldId === field.id)}
-      {@const isLink = isLinkField(field)}
-      {@const fieldValue = String(formValues[field.id] || '')}
-      {@const fieldParsed = isLink && fieldValue.trim() ? parseDestination(fieldValue) : null}
-
-      <div class="space-y-1.5">
-        <div class="flex items-center justify-between">
-          <label for={`field-${field.id}`} class="block text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-            {field.label}
-            {#if field.required}<span class="text-red-500 ml-0.5">*</span>{/if}
-          </label>
-          {#if mapping?.columnLetter}
-            <span class="text-[10px] font-mono-data px-1.5 py-0.2 rounded-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700" title={`Kolom ${mapping.columnLetter} di Google Sheets`}>
-              Kolom {mapping.columnLetter}
-            </span>
-          {/if}
+  <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="px-5 pb-4">
+    {#each groupedFields as group}
+      <section class="pt-4">
+        <div class="flex items-center gap-3 pb-2.5">
+          <h3 class="text-[11px] font-semibold text-[var(--text-secondary)]">{group.title}</h3>
+          <span class="h-px flex-1 bg-[var(--border-subtle)]"></span>
         </div>
 
-        {#if field.readOnly}
-          <!-- Filled by a human in the sheet afterwards; shown greyed out, never submitted -->
-          <div class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/60 text-zinc-500 dark:text-zinc-400 flex items-center justify-between gap-2">
-            <span class="truncate">{readOnlyValue(field) || 'Diisi manual di Google Sheets'}</span>
-            <span class="text-[9px] uppercase tracking-wider px-1 py-0.5 rounded-xs border border-zinc-300 dark:border-zinc-600 shrink-0">manual</span>
-          </div>
-        {:else if field.type === 'boolean'}
-          <label class="flex items-center gap-2 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={formValues[field.id]}
-              class="rounded-sm border-zinc-300 text-zinc-900 w-4 h-4"
-            />
-            <span>
-              {#if optionsFor(field).length >= 2}
-                {formValues[field.id] ? yesNoLabels(optionsFor(field)).yes : yesNoLabels(optionsFor(field)).no}
-              {:else}
-                Centang jika aktif / valid
-              {/if}
-            </span>
-          </label>
-        {:else if field.type === 'select' || optionsFor(field).length > 0}
-          <select
-            id={`field-${field.id}`}
-            bind:value={formValues[field.id]}
-            class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
-          >
-            <option value="">Pilih opsi...</option>
-            {#each optionsFor(field) as opt}
-              <option value={opt}>{opt}</option>
-            {/each}
-          </select>
-        {:else if field.type === 'longtext'}
-          <textarea
-            id={`field-${field.id}`}
-            rows="2"
-            bind:value={formValues[field.id]}
-            placeholder={`Masukkan ${field.label.toLowerCase()}...`}
-            class="w-full text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
-          ></textarea>
-        {:else if field.type === 'date' || field.type === 'datetime'}
-          <input
-            id={`field-${field.id}`}
-            type={field.type === 'datetime' ? 'datetime-local' : 'date'}
-            bind:value={formValues[field.id]}
-            class="w-full font-mono-data text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
-          />
-        {:else}
-          <!-- Input field with inline Camera icon button if it's a link/URL/QR column -->
-          <div class="relative flex items-center">
-            {#if idx === 0}
-              <input
-                id={`field-${field.id}`}
-                type={field.type === 'number' ? 'number' : field.type === 'url' ? 'url' : 'text'}
-                bind:this={firstInputRef}
-                bind:value={formValues[field.id]}
-                oninput={(e) => handleFieldInput(field.id, e)}
-                list={field.id === skuFieldId ? 'known-skus' : undefined}
-                placeholder={`Ketik ${field.label.toLowerCase()}...`}
-                class="w-full font-mono-data text-xs py-2 pl-3 {isLink ? 'pr-9' : 'pr-3'} rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
-              />
-            {:else}
-              <input
-                id={`field-${field.id}`}
-                type={field.type === 'number' ? 'number' : field.type === 'url' ? 'url' : 'text'}
-                bind:value={formValues[field.id]}
-                oninput={(e) => handleFieldInput(field.id, e)}
-                list={field.id === skuFieldId ? 'known-skus' : undefined}
-                placeholder={`Ketik ${field.label.toLowerCase()}...`}
-                class="w-full font-mono-data text-xs py-2 pl-3 {isLink ? 'pr-9' : 'pr-3'} rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
-              />
-            {/if}
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-3.5">
+          {#each group.fields as field}
+            {@const mapping = appState.mappings.find((m) => m.fieldId === field.id)}
+            {@const isLink = isLinkField(field)}
+            {@const fieldValue = String(formValues[field.id] || '')}
+            {@const fieldParsed = isLink && fieldValue.trim() ? parseDestination(fieldValue) : null}
+            {@const isWide = isLink || field.type === 'longtext' || field.readOnly}
 
-            <!-- Inline Camera Action Button for link/URL columns -->
-            {#if isLink}
-              <button
-                type="button"
-                class="absolute right-1.5 p-1 rounded-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-                title={`Scan QR langsung ke kolom ${field.label}`}
-                onclick={() => toggleCameraForField(field.id)}
-              >
-                {#if scanningFieldId === field.id}
-                  <CameraOff class="w-3.5 h-3.5 text-red-500" />
-                {:else}
-                  <Camera class="w-3.5 h-3.5" />
+            <div class="min-w-0 {isWide ? 'sm:col-span-2' : ''}">
+              <div class="flex items-baseline justify-between gap-2 pb-1">
+                <label for={`field-${field.id}`} class="text-xs font-medium text-[var(--text-primary)] leading-tight">
+                  {field.label}
+                  {#if field.required}<span class="text-[#b3261e] ml-0.5">*</span>{/if}
+                </label>
+                {#if mapping?.columnLetter}
+                  <span
+                    class="font-mono-data text-[10px] text-[var(--text-tertiary)] shrink-0"
+                    title={`Kolom ${mapping.columnLetter} di Google Sheets`}
+                  >{mapping.columnLetter}</span>
                 {/if}
-              </button>
-            {/if}
-          </div>
+              </div>
 
-          <!-- Known-SKU hint: one book spans many pages, so a repeat SKU is normal, not a clash -->
-          {#if field.id === skuFieldId && matchedBook}
-            <div class="mt-1 flex items-start gap-1.5 text-[10px] text-emerald-700 dark:text-emerald-400">
-              <CheckCircle2 class="w-3 h-3 shrink-0 mt-0.5" />
-              <span>
-                {matchedBook.name || 'Buku ini'} — sudah ada di baris {matchedBook.rowNumber}
-                ({matchedBook.pages} halaman). Nama buku terisi otomatis; kosongkan jika ingin ganti judul.
-                <button
-                  type="button"
-                  onclick={fillChoicesFromRow}
-                  class="ml-1 underline underline-offset-2 hover:no-underline cursor-pointer"
-                >
-                  Isi kolom pilihan dari baris {matchedBook.rowNumber}
-                </button>
-              </span>
-            </div>
-          {/if}
-
-          <!-- Sample Links for quick testing on QR / link columns -->
-          {#if isLink && !formValues[field.id]}
-            <div class="flex items-center gap-1.5 mt-1">
-              <span class="text-[10px] text-zinc-400">Sample:</span>
-              {#each SAMPLE_QRS as sample}
-                <button
-                  type="button"
-                  class="text-[10px] font-mono-data text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-                  onclick={() => formValues[field.id] = sample.url}
-                >
-                  {sample.label}
-                </button>
-              {/each}
-            </div>
-          {/if}
-
-          <!-- Contextual Inline Viewfinder for this specific field -->
-          {#if scanningFieldId === field.id}
-            <div class="mt-2 relative overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700 bg-black min-h-[200px] flex items-center justify-center">
-              <div id={`qr-viewfinder-${field.id}`} class="w-full max-w-xs"></div>
-              <div class="absolute inset-0 pointer-events-none flex items-center justify-center">
-                <div class="w-40 h-40 rounded-md border-2 transition-colors duration-150 {frameFlashed ? 'border-emerald-500 bg-emerald-500/20' : 'border-zinc-100/60 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]'}">
+              {#if field.readOnly}
+                <!-- Filled by a human in the sheet afterwards; shown greyed out, never submitted -->
+                <div class="w-full text-xs py-2 px-2.5 rounded-[3px] border border-dashed border-[#c9a44a] bg-[#fffaf0] text-[#7a5a12] flex items-center justify-between gap-2">
+                  <span class="truncate">{readOnlyValue(field) || 'Diisi manual di Google Sheets'}</span>
+                  <span class="text-[10px] shrink-0">manual</span>
                 </div>
-              </div>
-            </div>
-            {#if cameraError}
-              <div class="p-2 text-xs text-red-600 dark:text-red-400 bg-red-500/10 rounded-sm border border-red-500/20">
-                {cameraError}
-              </div>
-            {/if}
-          {/if}
+              {:else if field.type === 'boolean'}
+                <label class="flex items-center gap-2.5 py-2 px-2.5 rounded-[3px] border border-[var(--border-strong)] bg-[var(--surface-raised)] text-[13px] text-[var(--text-primary)] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    bind:checked={formValues[field.id]}
+                    class="w-4 h-4 shrink-0 rounded-[2px] border-[var(--border-strong)] accent-[var(--accent)]"
+                  />
+                  <span class="truncate">
+                    {#if optionsFor(field).length >= 2}
+                      {formValues[field.id] ? yesNoLabels(optionsFor(field)).yes : yesNoLabels(optionsFor(field)).no}
+                    {:else}
+                      Centang jika aktif
+                    {/if}
+                  </span>
+                </label>
+              {:else if field.type === 'select' || optionsFor(field).length > 0}
+                <select
+                  id={`field-${field.id}`}
+                  bind:value={formValues[field.id]}
+                  class="w-full text-[13px] py-2 px-2.5 rounded-[3px] border border-[var(--border-strong)] bg-[var(--surface-raised)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+                >
+                  <option value="">Pilih…</option>
+                  {#each optionsFor(field) as opt}
+                    <option value={opt}>{opt}</option>
+                  {/each}
+                </select>
+              {:else if field.type === 'longtext'}
+                <textarea
+                  id={`field-${field.id}`}
+                  rows="2"
+                  bind:value={formValues[field.id]}
+                  placeholder={`Tulis ${field.label.toLowerCase()}…`}
+                  class="w-full text-[13px] leading-relaxed py-2 px-2.5 rounded-[3px] border border-[var(--border-strong)] bg-[var(--surface-raised)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)]"
+                ></textarea>
+              {:else if field.type === 'date' || field.type === 'datetime'}
+                <input
+                  id={`field-${field.id}`}
+                  type={field.type === 'datetime' ? 'datetime-local' : 'date'}
+                  bind:value={formValues[field.id]}
+                  class="w-full text-[13px] py-2 px-2.5 rounded-[3px] border border-[var(--border-strong)] bg-[var(--surface-raised)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+                />
+              {:else}
+                <!-- Text / number / URL, with an inline camera button on link columns -->
+                <div class="relative flex items-center">
+                  <input
+                    id={`field-${field.id}`}
+                    type={field.type === 'number' ? 'number' : field.type === 'url' ? 'url' : 'text'}
+                    bind:value={formValues[field.id]}
+                    oninput={(e) => handleFieldInput(field.id, e)}
+                    list={field.id === skuFieldId ? 'known-skus' : undefined}
+                    placeholder={isLink ? 'Tempel atau scan tautan…' : `Ketik ${field.label.toLowerCase()}…`}
+                    class="w-full {field.id === skuFieldId ? 'font-mono-data ' : ''}text-[13px] py-2 pl-2.5 {isLink ? 'pr-9' : 'pr-2.5'} rounded-[3px] border border-[var(--border-strong)] bg-[var(--surface-raised)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)]"
+                  />
 
-          <!-- Automatic Media Preview specifically for this link field -->
-          {#if fieldParsed}
-            <div class="mt-2">
-              <MediaPreview parsed={fieldParsed} />
+                  {#if isLink}
+                    <button
+                      type="button"
+                      class="absolute right-1 p-1.5 rounded-[2px] text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--surface-panel)] transition-colors cursor-pointer"
+                      title={`Scan QR langsung ke kolom ${field.label}`}
+                      onclick={() => toggleCameraForField(field.id)}
+                    >
+                      {#if scanningFieldId === field.id}
+                        <CameraOff class="w-4 h-4 text-[#b3261e]" />
+                      {:else}
+                        <Camera class="w-4 h-4" />
+                      {/if}
+                    </button>
+                  {/if}
+                </div>
+
+                <!-- Known-SKU hint: one book spans many pages, so a repeat SKU is normal, not a clash -->
+                {#if field.id === skuFieldId && matchedBook}
+                  <div class="mt-1.5 flex items-start gap-1.5 text-[11px] text-[#17694a]">
+                    <CheckCircle2 class="w-3.5 h-3.5 shrink-0 mt-px" />
+                    <span>
+                      {matchedBook.name || 'Buku ini'} sudah ada di baris {matchedBook.rowNumber}
+                      ({matchedBook.pages} halaman). Judul terisi otomatis.
+                      <button
+                        type="button"
+                        onclick={fillChoicesFromRow}
+                        class="underline underline-offset-2 hover:no-underline cursor-pointer"
+                      >
+                        Salin kolom pilihan dari baris itu
+                      </button>
+                    </span>
+                  </div>
+                {/if}
+
+                <!-- Sample links for quick testing on link columns -->
+                {#if isLink && !formValues[field.id]}
+                  <div class="flex items-center gap-2 mt-1.5">
+                    <span class="text-[11px] text-[var(--text-tertiary)]">Contoh:</span>
+                    {#each SAMPLE_QRS as sample}
+                      <button
+                        type="button"
+                        class="text-[11px] text-[var(--accent)] hover:underline cursor-pointer"
+                        onclick={() => formValues[field.id] = sample.url}
+                      >
+                        {sample.label}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+
+                <!-- Contextual inline viewfinder for this field -->
+                {#if scanningFieldId === field.id}
+                  <div class="mt-2 relative overflow-hidden rounded-[3px] border border-[var(--border-strong)] bg-[#14130f] min-h-[200px] flex items-center justify-center">
+                    <div id={`qr-viewfinder-${field.id}`} class="w-full max-w-xs"></div>
+                    <div class="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      <div class="w-40 h-40 rounded-[3px] border-2 transition-colors duration-150 {frameFlashed ? 'border-[#7dfb4c] bg-[#7dfb4c]/20' : 'border-white/60 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]'}">
+                      </div>
+                    </div>
+                  </div>
+                  {#if cameraError}
+                    <div class="mt-1.5 p-2 text-[11px] text-[#b3261e] bg-[#fdeceb] rounded-[3px] border border-[#f0c8c4]">
+                      {cameraError}
+                    </div>
+                  {/if}
+                {/if}
+
+                <!-- Automatic media preview for this link field -->
+                {#if fieldParsed}
+                  <div class="mt-2">
+                    <MediaPreview parsed={fieldParsed} />
+                  </div>
+                {/if}
+              {/if}
             </div>
-          {/if}
-        {/if}
-      </div>
+          {/each}
+        </div>
+      </section>
     {/each}
 
-    <!-- Feedback Banner -->
+    <!-- Feedback -->
     {#if feedback.type}
-      <div class="p-2.5 rounded-sm text-xs flex items-center gap-2 {feedback.type === 'success' ? 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border border-emerald-500/20' : feedback.type === 'warning' ? 'bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-500/20' : 'bg-red-500/10 text-red-800 dark:text-red-300 border border-red-500/20'}">
+      <div class="mt-4 p-2.5 rounded-[3px] text-[11px] flex items-center gap-2 {feedback.type === 'success' ? 'bg-[#eaf5ef] text-[#14532d] border border-[#bfe0cd]' : feedback.type === 'warning' ? 'bg-[#fdf6e3] text-[#7a5a12] border border-[#e8d9a8]' : 'bg-[#fdeceb] text-[#8f1d16] border border-[#f0c8c4]'}">
         {#if feedback.type === 'success'}
-          <CheckCircle2 class="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <CheckCircle2 class="w-3.5 h-3.5 shrink-0" />
         {:else}
-          <AlertCircle class="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <AlertCircle class="w-3.5 h-3.5 shrink-0" />
         {/if}
-        <span class="flex-1 font-medium">{feedback.message}</span>
+        <span class="flex-1">{feedback.message}</span>
         {#if feedback.details}
-          <span class="text-[11px] opacity-75 font-mono-data">{feedback.details}</span>
+          <span class="font-mono-data opacity-70">{feedback.details}</span>
         {/if}
       </div>
     {/if}
 
-    <!-- 5-Second Undo Toast Bar -->
+    <!-- 5-second undo -->
     {#if lastSubmittedRecord}
-      <div class="p-2.5 rounded-sm bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 text-xs flex items-center justify-between transition-all">
+      <div class="mt-3 px-3 py-2 rounded-[3px] bg-[var(--accent-soft)] text-[#0f3f2c] text-xs flex items-center justify-between gap-2">
         <div class="flex items-center gap-2">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-          <span>Tersimpan p.{lastSubmittedRecord.pageNumber}</span>
+          <span class="w-1.5 h-1.5 rounded-full bg-[#17694a]"></span>
+          <span>Tersimpan di halaman {lastSubmittedRecord.pageNumber}</span>
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-semibold bg-white/20 dark:bg-black/10 hover:bg-white/30 transition-colors cursor-pointer"
+          class="inline-flex items-center gap-1 px-2 py-1 rounded-[2px] font-semibold bg-white/70 hover:bg-white transition-colors cursor-pointer"
           onclick={handleUndo}
         >
           <Undo2 class="w-3 h-3" />
@@ -800,39 +814,37 @@
       </div>
     {/if}
 
-    <!-- Submit & Clear Buttons -->
-    <div class="pt-2">
-      <div class="flex items-center gap-2">
+    <!-- Actions -->
+    <div class="mt-4 pt-3.5 border-t border-[var(--border-subtle)]">
+      <div class="flex items-stretch gap-2">
         <button
           type="button"
           onclick={handleClearForm}
-          class="flex items-center justify-center gap-1.5 py-2.5 px-3.5 text-xs font-semibold rounded-sm border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-          title="Kosongkan form input"
+          class="flex items-center justify-center gap-1.5 py-2.5 px-3 text-xs font-medium rounded-[3px] border border-[var(--border-strong)] text-[var(--text-secondary)] hover:bg-[var(--surface-raised)] transition-colors cursor-pointer"
+          title="Kosongkan form"
         >
           <RotateCcw class="w-3.5 h-3.5" />
-          <span>Clear</span>
+          <span>Kosongkan</span>
         </button>
 
         <button
           type="submit"
           disabled={isSubmitting || !!disabledReason}
-          class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 text-xs font-bold rounded-sm bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 text-[13px] font-semibold rounded-[3px] bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           title={disabledReason || 'Kirim baris ke Google Sheets (Ctrl+Enter)'}
         >
           {#if isSubmitting}
-            <div class="w-3.5 h-3.5 border-2 border-white/40 dark:border-black/40 border-t-white dark:border-t-black rounded-full animate-spin"></div>
-            <span>Menyimpan ke Sheets...</span>
+            <div class="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
+            <span>Menyimpan…</span>
           {:else}
-            <span>Kirim Baris ke Google Sheets</span>
-            <kbd class="hidden sm:inline-block text-[10px] opacity-60 font-mono-data ml-1">Ctrl+Enter</kbd>
+            <span>Kirim ke Google Sheets</span>
+            <kbd class="hidden sm:inline-block text-[10px] opacity-70 font-mono-data">Ctrl+Enter</kbd>
           {/if}
         </button>
       </div>
 
       {#if disabledReason}
-        <p class="text-[11px] text-zinc-400 dark:text-zinc-500 font-mono-data text-center mt-1.5">
-          {disabledReason}
-        </p>
+        <p class="text-[11px] text-[var(--text-tertiary)] text-center mt-2">{disabledReason}</p>
       {/if}
     </div>
   </form>

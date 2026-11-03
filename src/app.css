@@ -4,29 +4,36 @@
 
 @layer base {
   :root {
-    --surface-page: #f4f4f5;
+    --surface-page: #f6f6f4;
     --surface-panel: #ffffff;
-    --surface-raised: #f9fafb;
-    --border-subtle: #e4e4e7;
-    --border-strong: #d4d4d8;
-    --text-primary: #18181b;
-    --text-secondary: #52525b;
-    --text-tertiary: #71717a;
-    --action-primary-bg: #18181b;
-    --action-primary-text: #f4f4f5;
+    --surface-raised: #fbfbfa;
+    --border-subtle: #e3e3df;
+    --border-strong: #cdcdc7;
+    --text-primary: #1a1c1a;
+    --text-secondary: #545853;
+    --text-tertiary: #7d827c;
+    --action-primary-bg: #1a1c1a;
+    --action-primary-text: #f6f6f4;
+    /* Ink green: the sheet's own header colour, so the form reads as part of the same document. */
+    --accent: #17694a;
+    --accent-hover: #12523a;
+    --accent-soft: #e2f2e8;
   }
 
   .dark {
-    --surface-page: #09090b;
-    --surface-panel: #121215;
-    --surface-raised: #18181b;
-    --border-subtle: #27272a;
-    --border-strong: #3f3f46;
-    --text-primary: #f4f4f5;
-    --text-secondary: #a1a1aa;
-    --text-tertiary: #71717a;
-    --action-primary-bg: #f4f4f5;
-    --action-primary-text: #09090b;
+    --surface-page: #101210;
+    --surface-panel: #171a17;
+    --surface-raised: #1d201d;
+    --border-subtle: #2b2f2b;
+    --border-strong: #3d423d;
+    --text-primary: #f0f2ef;
+    --text-secondary: #a8aeaa;
+    --text-tertiary: #7d827c;
+    --action-primary-bg: #f0f2ef;
+    --action-primary-text: #101210;
+    --accent: #4fbb8b;
+    --accent-hover: #6ad3a3;
+    --accent-soft: #17332a;
   }
 
   body {
