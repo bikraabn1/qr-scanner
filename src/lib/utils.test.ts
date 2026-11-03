@@ -116,6 +116,23 @@ describe('Payload Mapper', () => {
     expect(payload.L).toBeUndefined(); // disabled field excluded
   });
 
+  it('never writes an unticked checkbox cell', () => {
+    const boolField: FieldDefinition = {
+      id: 'custom_internal_ts',
+      label: 'KONTEN INTERNAL TS?',
+      type: 'boolean',
+      required: false,
+      enabled: true
+    };
+    const boolMapping: ColumnMapping = { fieldId: 'custom_internal_ts', columnLetter: 'H' };
+    const unticked = { ...record, customFields: { ...record.customFields, custom_internal_ts: false } };
+    const ticked = { ...record, customFields: { ...record.customFields, custom_internal_ts: true } };
+
+    // "Bukan" must leave the cell alone: FALSE is what printed the word FALSE in a checkbox column.
+    expect(buildRowPayload(unticked, [boolField], [boolMapping])).toEqual({});
+    expect(buildRowPayload(ticked, [boolField], [boolMapping])).toEqual({ H: true });
+  });
+
   it('handles field values lookup', () => {
     expect(getFieldValue(record, 'pageNumber')).toBe(42);
     expect(getFieldValue(record, 'qrContent')).toBe('https://example.com/ch4');
