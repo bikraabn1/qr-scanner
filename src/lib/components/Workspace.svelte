@@ -622,19 +622,27 @@
   {/each}
 </datalist>
 
-<div class="bg-[var(--surface-panel)] border border-[var(--border-subtle)] rounded-md transition-colors">
+<div class="bg-[var(--surface-panel)] border border-[var(--border-subtle)] rounded-md">
   <!-- Panel header: what this panel does, in one line -->
   <div class="flex items-baseline justify-between gap-3 px-5 pt-4 pb-3 border-b border-[var(--border-subtle)]">
-    <h2 class="text-sm font-semibold text-[var(--text-primary)]">Input hasil uji</h2>
-    <span class="text-[11px] text-[var(--text-tertiary)]">
-      {activeFields.length} kolom dikirim ke sheet
+    <div class="min-w-0">
+      <h2 class="text-sm font-semibold text-[var(--text-primary)]">Catat satu QR</h2>
+      <p class="text-[11px] text-[var(--text-secondary)] mt-0.5">
+        Isi dari atas ke bawah, lalu kirim.
+      </p>
+    </div>
+    <span class="text-[11px] text-[var(--text-tertiary)] shrink-0 font-mono-data">
+      {activeFields.length} kolom
     </span>
   </div>
 
   <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="px-5 pb-4">
-    {#each groupedFields as group}
+    {#each groupedFields as group, gi}
       <section class="pt-4">
-        <div class="flex items-center gap-3 pb-2.5">
+        <div class="flex items-center gap-2 pb-2.5">
+          <span
+            class="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-semibold shrink-0 bg-[var(--accent-soft)] text-[var(--accent)]"
+          >{gi + 1}</span>
           <h3 class="text-[11px] font-semibold text-[var(--text-secondary)]">{group.title}</h3>
           <span class="h-px flex-1 bg-[var(--border-subtle)]"></span>
         </div>

@@ -76,8 +76,10 @@
     </main>
 
     <!-- Instrument Panel Minimal Footer -->
-    <footer class="border-t border-zinc-200 dark:border-zinc-800/80 py-3 px-6 text-center text-[11px] font-mono-data text-zinc-400">
-      QR-LOGBOOK &bull; Svelte 5 Runes &bull; Google Sheets API Direct Client
+    <footer
+      class="border-t border-[var(--border-subtle)] py-3 px-6 text-center text-[11px] text-[var(--text-tertiary)]"
+    >
+      {appState.config.sheetName || 'Belum ada tab'} &middot; {appState.records.length} baris sesi ini
     </footer>
   </div>
 {/if}

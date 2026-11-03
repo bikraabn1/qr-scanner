@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appState } from '../store.svelte';
-  import { Minus, Plus, Lock, Layers } from '@lucide/svelte';
+  import { Minus, Plus, Layers } from '@lucide/svelte';
 
   function increment(amount: number) {
     appState.setPageNumber(appState.currentPage + amount);
@@ -8,80 +8,66 @@
 
   function handleInput(e: Event) {
     const val = parseInt((e.target as HTMLInputElement).value, 10);
-    if (!isNaN(val) && val > 0) {
-      appState.setPageNumber(val);
-    }
+    if (!isNaN(val) && val > 0) appState.setPageNumber(val);
   }
 
   let totalCount = $derived(appState.records.length);
 </script>
 
-<div class="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-4 sm:px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs transition-colors">
-  <!-- Left: Page controls & lock icon -->
+<div
+  class="bg-[var(--surface-panel)] border border-[var(--border-subtle)] rounded-md px-4 py-2.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2"
+>
+  <!-- What this number means, in the operator's own words -->
   <div class="flex items-center gap-3">
-    <div class="flex items-center gap-1.5" title="Nomor halaman buku terkunci dan tetap sama untuk scan berikutnya">
-      <Lock class="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 shrink-0" />
-      <span class="text-xs font-semibold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">Book Page Tracker</span>
-    </div>
+    <span class="text-xs text-[var(--text-secondary)]">Halaman buku</span>
 
-    <!-- Stepper -->
-    <div class="flex items-center gap-1 bg-zinc-50 dark:bg-zinc-950 p-0.5 rounded-md border border-zinc-200 dark:border-zinc-800">
+    <div class="flex items-center gap-0.5 rounded-[3px] border border-[var(--border-strong)] bg-[var(--surface-raised)] p-0.5">
       <button
         type="button"
-        class="inline-flex items-center justify-center w-7 h-7 rounded-sm bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 active:scale-95 transition-all disabled:opacity-30 cursor-pointer"
+        class="inline-flex items-center justify-center w-6 h-6 rounded-[2px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] active:scale-95 transition-all disabled:opacity-30 cursor-pointer"
         disabled={appState.currentPage <= 1}
         onclick={() => increment(-1)}
-        aria-label="Previous page"
+        aria-label="Halaman sebelumnya"
       >
         <Minus class="w-3.5 h-3.5" />
       </button>
 
-      <div class="relative flex items-center px-1">
-        <input
-          type="number"
-          min="1"
-          step="1"
-          value={appState.currentPage}
-          oninput={handleInput}
-          onchange={handleInput}
-          aria-label="Book page number input"
-          class="w-16 text-center font-mono-data text-lg font-bold bg-transparent text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:focus:ring-zinc-600"
-        />
-      </div>
+      <input
+        type="number"
+        min="1"
+        step="1"
+        value={appState.currentPage}
+        oninput={handleInput}
+        onchange={handleInput}
+        aria-label="Nomor halaman"
+        class="w-12 text-center font-mono-data text-sm font-semibold bg-transparent text-[var(--text-primary)] focus:outline-none"
+      />
 
       <button
         type="button"
-        class="inline-flex items-center justify-center w-7 h-7 rounded-sm bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 active:scale-95 transition-all cursor-pointer"
+        class="inline-flex items-center justify-center w-6 h-6 rounded-[2px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] active:scale-95 transition-all cursor-pointer"
         onclick={() => increment(1)}
-        aria-label="Next page"
+        aria-label="Halaman berikutnya"
       >
         <Plus class="w-3.5 h-3.5" />
       </button>
-
-      <div class="w-px h-3.5 bg-zinc-200 dark:border-zinc-800 mx-0.5"></div>
-
-      <button
-        type="button"
-        class="px-2 py-1 text-[11px] font-mono-data font-medium rounded-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-        onclick={() => increment(5)}
-      >
-        +5
-      </button>
-      <button
-        type="button"
-        class="px-2 py-1 text-[11px] font-mono-data font-medium rounded-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-        onclick={() => increment(10)}
-      >
-        +10
-      </button>
     </div>
+
+    <button
+      type="button"
+      class="px-1.5 py-0.5 text-[11px] font-mono-data text-[var(--text-tertiary)] rounded-[2px] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition-colors cursor-pointer"
+      onclick={() => increment(5)}
+    >+5</button>
+    <button
+      type="button"
+      class="px-1.5 py-0.5 text-[11px] font-mono-data text-[var(--text-tertiary)] rounded-[2px] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition-colors cursor-pointer"
+      onclick={() => increment(10)}
+    >+10</button>
   </div>
 
-  <!-- Right: Session records submitted counter -->
-  <div class="flex items-center gap-2 text-xs font-mono-data text-zinc-500 dark:text-zinc-400">
-    <Layers class="w-3.5 h-3.5 text-zinc-400" />
-    <span>
-      <strong class="font-bold text-zinc-900 dark:text-zinc-100">{totalCount}</strong> baris terkirim sesi ini
-    </span>
+  <div class="flex items-center gap-1.5 text-[11px] text-[var(--text-tertiary)]">
+    <Layers class="w-3.5 h-3.5" />
+    <span class="font-mono-data font-semibold text-[var(--text-primary)]">{totalCount}</span>
+    <span>baris terkirim sesi ini</span>
   </div>
 </div>
