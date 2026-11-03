@@ -159,11 +159,8 @@ export function buildRowPayload(
     if (!field || !field.enabled || field.readOnly) continue;
 
     const val = getFieldValue(record, mapping.fieldId, field);
-    // "Bukan" means leave the box alone — writing FALSE prints the literal word FALSE in a
-    // checkbox column. Only a ticked box ever writes a cell.
-    // ponytail: an untick can't clear an already-ticked cell; wipe it in the sheet if that matters.
-    if (field.type === 'boolean' && val === false) continue;
-
+    // Checkbox columns always carry a real boolean: submitRecord routes them through
+    // updateCells/boolValue so the sheet ends up with a ticked box, never the text "TRUE".
     payload[col] = val;
   }
 

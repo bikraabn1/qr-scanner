@@ -128,8 +128,8 @@ describe('Payload Mapper', () => {
     const unticked = { ...record, customFields: { ...record.customFields, custom_internal_ts: false } };
     const ticked = { ...record, customFields: { ...record.customFields, custom_internal_ts: true } };
 
-    // "Bukan" must leave the cell alone: FALSE is what printed the word FALSE in a checkbox column.
-    expect(buildRowPayload(unticked, [boolField], [boolMapping])).toEqual({});
+    // Both states are written as a real boolean; submitRecord converts them to a ticked/unticked box.
+    expect(buildRowPayload(unticked, [boolField], [boolMapping])).toEqual({ H: false });
     expect(buildRowPayload(ticked, [boolField], [boolMapping])).toEqual({ H: true });
   });
 

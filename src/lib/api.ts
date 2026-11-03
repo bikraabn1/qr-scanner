@@ -170,22 +170,32 @@ export async function findTargetRow(
   return i + 1;
 }
 
+/** Columns that are checkboxes in the sheet, even if the sheet lost its validation rule. */
+const CHECKBOX_LABEL_RE = /internal|\bts\b|checkbox|centang/i;
+
+function isCheckboxField(field: FieldDefinition): boolean {
+  return field.type === 'boolean' || CHECKBOX_LABEL_RE.test(field.label || '');
+}
+
 /**
- * Tick checkbox cells via batchUpdate. Writing through the values API stores a *value*, and when a
- * cell's checkbox validation is gone the value lands as the text "TRUE" with no box. updateCells with
- * boolValue plus setDataValidation(BOOLEAN) always ends with a real ticked checkbox.
+ * Tick checkbox cells via batchUpdate. Values-API writes store a *value*, and when a cell lost its
+ * checkbox validation the value lands as the text "TRUE" with no box. updateCells with boolValue
+ * plus setDataValidation(BOOLEAN) always leaves a real checkbox behind.
  */
 async function writeCheckboxCells(
   spreadsheetId: string,
   sheetName: string,
   rowNumber: number,
-  columns: string[],
+  cells: Record<string, boolean>,
   token: string
 ): Promise<void> {
+  const columns = Object.keys(cells);
+  if (columns.length === 0) return;
+
   const sheetId = await resolveSheetId(spreadsheetId, sheetName, token);
 
   const requests = columns.flatMap((col) => {
-    const cell = {
+    const range = {
       sheetId,
       startRowIndex: rowNumber - 1,
       endRowIndex: rowNumber,
@@ -195,14 +205,14 @@ async function writeCheckboxCells(
     return [
       {
         updateCells: {
-          range: cell,
-          rows: [{ values: [{ userEnteredValue: { boolValue: true } }] }],
+          range,
+          rows: [{ values: [{ userEnteredValue: { boolValue: cells[col] } }] }],
           fields: 'userEnteredValue'
         }
       },
       {
         setDataValidation: {
-          range: cell,
+          range,
           rule: { condition: { type: 'BOOLEAN' }, showCustomUi: true }
         }
       }
@@ -271,11 +281,18 @@ export async function submitRecord(
 
   const columnMap = buildRowPayload(record, fields, mappings);
 
-  // Checkbox cells are handled separately (RAW write) so the sheet gets a real boolean.
-  const checkboxCols = Object.keys(columnMap).filter((c) => columnMap[c] === true);
-  for (const c of checkboxCols) delete columnMap[c];
+  // Checkboxes go through batchUpdate/boolValue; every other column through the values API.
+  const checkboxCells: Record<string, boolean> = {};
+  for (const [col, val] of Object.entries(columnMap)) {
+    const mapping = mappings.find((m) => m.columnLetter?.trim().toUpperCase() === col);
+    const field = fields.find((f) => f.id === mapping?.fieldId);
+    if (field && isCheckboxField(field)) {
+      checkboxCells[col] = val === true;
+      delete columnMap[col];
+    }
+  }
 
-  if (Object.keys(columnMap).length === 0 && checkboxCols.length === 0) {
+  if (Object.keys(columnMap).length === 0 && Object.keys(checkboxCells).length === 0) {
     throw new Error('Tidak ada kolom yang aktif atau di-mapping ke Google Sheets.');
   }
 
@@ -329,8 +346,8 @@ export async function submitRecord(
 
       if (!response.ok) await throwSheetsError(response, spreadsheetId);
 
-      if (checkboxCols.length > 0) {
-        await writeCheckboxCells(spreadsheetId, sheetName, targetRow, checkboxCols, token);
+      if (Object.keys(checkboxCells).length > 0) {
+        await writeCheckboxCells(spreadsheetId, sheetName, targetRow, checkboxCells, token);
       }
 
       return {
@@ -391,8 +408,8 @@ export async function submitRecord(
     const match = updatedRange.match(/!.*?([0-9]+):/);
     const rowNumber = match ? parseInt(match[1], 10) : undefined;
 
-    if (rowNumber && checkboxCols.length > 0) {
-      await writeCheckboxCells(spreadsheetId, sheetName, rowNumber, checkboxCols, token);
+    if (rowNumber && Object.keys(checkboxCells).length > 0) {
+      await writeCheckboxCells(spreadsheetId, sheetName, rowNumber, checkboxCells, token);
     }
 
     return {
