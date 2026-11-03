@@ -297,8 +297,10 @@
       if (!value) continue;
 
       if (field.type === 'boolean') {
-        const opts = field.options ?? [];
-        formValues[field.id] = opts.length >= 2 ? value === opts[0] : /^(ya|yes|true|1|centang|✓)$/i.test(value);
+        const { yes } = yesNoLabels(optionsFor(field));
+        formValues[field.id] = yes
+          ? value.trim().toLowerCase() === yes.trim().toLowerCase()
+          : YES_RE.test(value);
       } else {
         formValues[field.id] = value;
       }
@@ -621,6 +623,21 @@
             <span class="truncate">{readOnlyValue(field) || 'Diisi manual di Google Sheets'}</span>
             <span class="text-[9px] uppercase tracking-wider px-1 py-0.5 rounded-xs border border-zinc-300 dark:border-zinc-600 shrink-0">manual</span>
           </div>
+        {:else if field.type === 'boolean'}
+          <label class="flex items-center gap-2 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 cursor-pointer">
+            <input
+              type="checkbox"
+              bind:checked={formValues[field.id]}
+              class="rounded-sm border-zinc-300 text-zinc-900 w-4 h-4"
+            />
+            <span>
+              {#if optionsFor(field).length >= 2}
+                {formValues[field.id] ? yesNoLabels(optionsFor(field)).yes : yesNoLabels(optionsFor(field)).no}
+              {:else}
+                Centang jika aktif / valid
+              {/if}
+            </span>
+          </label>
         {:else if field.type === 'select' || optionsFor(field).length > 0}
           <select
             id={`field-${field.id}`}
@@ -640,21 +657,6 @@
             placeholder={`Masukkan ${field.label.toLowerCase()}...`}
             class="w-full text-xs py-2 px-3 rounded-sm border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100"
           ></textarea>
-        {:else if field.type === 'boolean'}
-          <label class="flex items-center gap-2 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={formValues[field.id]}
-              class="rounded-sm border-zinc-300 text-zinc-900 w-4 h-4"
-            />
-            <span>
-              {#if optionsFor(field).length >= 2}
-                {formValues[field.id] ? yesNoLabels(optionsFor(field)).yes : yesNoLabels(optionsFor(field)).no}
-              {:else}
-                Centang jika aktif / valid
-              {/if}
-            </span>
-          </label>
         {:else if field.type === 'date' || field.type === 'datetime'}
           <input
             id={`field-${field.id}`}

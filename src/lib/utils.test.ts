@@ -138,21 +138,26 @@ describe('Payload Mapper', () => {
     expect(getFieldValue(recChecked, 'custom_check', boolField)).toBe(true);
     expect(getFieldValue(recUnchecked, 'custom_check', boolField)).toBe(false);
 
-    // Checkbox with custom values (e.g. ['Ya', 'Bukan'])
+    // Custom labels are display-only in Sheets: the cell must receive TRUE/FALSE, or the
+    // spreadsheet checkbox stays visually empty even though "Ya" was answered.
     const customBoolField: FieldDefinition = {
       ...boolField,
       options: ['Ya', 'Bukan']
     };
-    expect(getFieldValue(recChecked, 'custom_check', customBoolField)).toBe('Ya');
-    expect(getFieldValue(recUnchecked, 'custom_check', customBoolField)).toBe('Bukan');
+    expect(getFieldValue(recChecked, 'custom_check', customBoolField)).toBe(true);
+    expect(getFieldValue(recUnchecked, 'custom_check', customBoolField)).toBe(false);
 
     // The sheet may store the pair in the other order: checked must still mean "Ya".
     const reversed: FieldDefinition = { ...boolField, options: ['Bukan', 'Ya'] };
-    expect(getFieldValue(recChecked, 'custom_check', reversed)).toBe('Ya');
-    expect(getFieldValue(recUnchecked, 'custom_check', reversed)).toBe('Bukan');
+    expect(getFieldValue(recChecked, 'custom_check', reversed)).toBe(true);
+    expect(getFieldValue(recUnchecked, 'custom_check', reversed)).toBe(false);
 
     // "Iya" is what the reviewer typed in the sheet, not "Ya".
     const iya: FieldDefinition = { ...boolField, options: ['Iya', 'Bukan'] };
-    expect(getFieldValue(recChecked, 'custom_check', iya)).toBe('Iya');
+    expect(getFieldValue(recChecked, 'custom_check', iya)).toBe(true);
+
+    // The radio/select fallback stores the label text itself; that still counts as ticked.
+    expect(getFieldValue({ ...record, customFields: { custom_check: 'Ya' } }, 'custom_check', customBoolField)).toBe(true);
+    expect(getFieldValue({ ...record, customFields: { custom_check: 'Iya' } }, 'custom_check', iya)).toBe(true);
   });
 });

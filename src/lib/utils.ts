@@ -122,17 +122,18 @@ export function getFieldValue(
     return raw.split('T')[0];
   }
 
-  // Handle boolean / checkbox fields with custom cell values (e.g. ['Ya', 'Bukan'] or standard boolean)
+  // Checkbox columns must be written as a real boolean: Google Sheets stores TRUE/FALSE and only
+  // *displays* custom labels ("Ya"/"Bukan"). Writing the label text leaves the box unticked.
   if (fieldDef?.type === 'boolean') {
-    const isChecked = Boolean(raw === true || raw === 'true' || raw === 'TRUE' || raw === 1 || raw === '1');
-    const opts = fieldDef.options ?? [];
-    if (opts.length >= 2) {
-      // Affirmative label found by text, never by option order (["Bukan","Ya"] is common).
-      const { yes, no } = yesNoLabels(opts);
-      return isChecked ? (yes ?? '') : (no ?? '');
-    }
-    if (opts.length === 1) return isChecked ? opts[0] : '';
-    return isChecked; // native boolean for Google Sheets checkbox
+    const text = String(raw ?? '').trim();
+    const { yes } = yesNoLabels(fieldDef.options);
+    return (
+      raw === true ||
+      raw === 1 ||
+      text === '1' ||
+      YES_RE.test(text) ||
+      (!!yes && text.toLowerCase() === yes.toLowerCase())
+    );
   }
 
   return raw;

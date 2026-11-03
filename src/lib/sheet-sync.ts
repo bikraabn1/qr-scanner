@@ -163,9 +163,14 @@ export function syncFromRowHeaders(
         ? colRule.options
         : existingBuiltIn.options;
 
-      const updatedType = colRule?.options && colRule.options.length > 0
-        ? 'select'
-        : (colRule?.type || existingBuiltIn.type);
+      // A native checkbox column reports its custom labels as options too — type wins over options,
+      // otherwise the checkbox degrades into a "Ya/Bukan" dropdown.
+      const updatedType =
+        colRule?.type === 'boolean'
+          ? 'boolean'
+          : colRule?.options && colRule.options.length > 0
+            ? 'select'
+            : (colRule?.type || existingBuiltIn.type);
 
       fields.push({
         ...existingBuiltIn,
