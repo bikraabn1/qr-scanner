@@ -136,6 +136,19 @@
     }
   });
 
+  /**
+   * "KONTEN INTERNAL TS?" only describes content the team made itself. A Youtube link is external,
+   * so picking Youtube unticks the box automatically instead of leaving a stale tick behind.
+   * Only the jenis value is read, so an operator's later manual tick is not fought back.
+   */
+  $effect(() => {
+    const jenis = activeFields.find((f) => /jenis|tipe\b|type\b/i.test(f.label));
+    if (!jenis || !/youtube/i.test(String(formValues[jenis.id] ?? ''))) return;
+    for (const f of activeFields) {
+      if (f.type === 'boolean' && /internal|\bts\b/i.test(f.label)) formValues[f.id] = false;
+    }
+  });
+
   // Validation
   let disabledReason = $derived.by(() => {
     if (!appState.accessToken) return 'Sign in with Google untuk mulai mencatat';
@@ -575,6 +588,12 @@
 
       // Notify parent to refresh live spreadsheet preview
       onRecordSubmitted?.();
+
+      // Ready for the next QR: clear the link field(s) only. SKU/JUDUL stay so the next page of the
+      // same book does not have to be retyped.
+      for (const f of activeFields) {
+        if (isLinkField(f)) formValues[f.id] = '';
+      }
 
       startUndoCountdown(newRecord);
     } catch (err: unknown) {
