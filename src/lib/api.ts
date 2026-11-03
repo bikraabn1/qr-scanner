@@ -171,8 +171,9 @@ export async function findTargetRow(
 }
 
 /**
- * Tick checkbox cells. These must be written RAW: with USER_ENTERED Google parses the value as if
- * typed and the cell ends up holding the text "TRUE" instead of a boolean, so the box never ticks.
+ * Tick checkbox cells via batchUpdate. Writing through the values API stores a *value*, and when a
+ * cell's checkbox validation is gone the value lands as the text "TRUE" with no box. updateCells with
+ * boolValue plus setDataValidation(BOOLEAN) always ends with a real ticked checkbox.
  */
 async function writeCheckboxCells(
   spreadsheetId: string,
@@ -181,20 +182,66 @@ async function writeCheckboxCells(
   columns: string[],
   token: string
 ): Promise<void> {
-  for (const col of columns) {
-    const range = formatA1Range(sheetName, `${col}${rowNumber}`);
-    const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
-    const response = await googleFetch(
-      endpoint,
+  const sheetId = await resolveSheetId(spreadsheetId, sheetName, token);
+
+  const requests = columns.flatMap((col) => {
+    const cell = {
+      sheetId,
+      startRowIndex: rowNumber - 1,
+      endRowIndex: rowNumber,
+      startColumnIndex: columnLetterToIndex(col) - 1,
+      endColumnIndex: columnLetterToIndex(col)
+    };
+    return [
       {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: [[true]] })
+        updateCells: {
+          range: cell,
+          rows: [{ values: [{ userEnteredValue: { boolValue: true } }] }],
+          fields: 'userEnteredValue'
+        }
       },
-      token
-    );
-    if (!response.ok) await throwSheetsError(response, spreadsheetId);
+      {
+        setDataValidation: {
+          range: cell,
+          rule: { condition: { type: 'BOOLEAN' }, showCustomUi: true }
+        }
+      }
+    ];
+  });
+
+  const response = await googleFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests })
+    },
+    token
+  );
+  if (!response.ok) await throwSheetsError(response, spreadsheetId);
+}
+
+/** Numeric sheetId is only needed by batchUpdate; titles are what the rest of the app uses. */
+async function resolveSheetId(
+  spreadsheetId: string,
+  sheetName: string,
+  token: string
+): Promise<number> {
+  const response = await googleFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=sheets.properties`,
+    {},
+    token
+  );
+  if (!response.ok) await throwSheetsError(response, spreadsheetId);
+
+  const data = await response.json();
+  const match = (data.sheets || []).find(
+    (s: any) => String(s.properties?.title || '').trim() === sheetName.trim()
+  );
+  if (match?.properties?.sheetId === undefined) {
+    throw new Error(`Tab "${sheetName}" tidak ditemukan di spreadsheet.`);
   }
+  return match.properties.sheetId as number;
 }
 
 /**
