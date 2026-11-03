@@ -129,5 +129,14 @@ describe('Payload Mapper', () => {
     };
     expect(getFieldValue(recChecked, 'custom_check', customBoolField)).toBe('Ya');
     expect(getFieldValue(recUnchecked, 'custom_check', customBoolField)).toBe('Bukan');
+
+    // The sheet may store the pair in the other order: checked must still mean "Ya".
+    const reversed: FieldDefinition = { ...boolField, options: ['Bukan', 'Ya'] };
+    expect(getFieldValue(recChecked, 'custom_check', reversed)).toBe('Ya');
+    expect(getFieldValue(recUnchecked, 'custom_check', reversed)).toBe('Bukan');
+
+    // "Iya" is what the reviewer typed in the sheet, not "Ya".
+    const iya: FieldDefinition = { ...boolField, options: ['Iya', 'Bukan'] };
+    expect(getFieldValue(recChecked, 'custom_check', iya)).toBe('Iya');
   });
 });

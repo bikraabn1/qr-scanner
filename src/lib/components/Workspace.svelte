@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { appState } from '../store.svelte';
   import { submitRecord } from '../api';
-  import { generateRecordId } from '../utils';
+  import { generateRecordId, yesNoLabels } from '../utils';
   import { parseDestination } from '../url-parser';
   import { playScanBeep } from '../audio';
   import { buildSheetIndex, findSkuField, findNameField, type KnownBook } from '../book-index';
@@ -300,8 +300,8 @@
       }
       const value = (matchedBook.cells[idx] ?? '').trim();
       if (!value) continue;
-      const labels = optionsFor(field);
-      formValues[field.id] = labels.length >= 2 ? value === labels[0] : YES_RE.test(value);
+      const { yes } = yesNoLabels(optionsFor(field));
+      formValues[field.id] = yes ? value.trim().toLowerCase() === yes.trim().toLowerCase() : YES_RE.test(value);
     }
   }
 
@@ -625,8 +625,8 @@
               class="rounded-sm border-zinc-300 text-zinc-900 w-4 h-4"
             />
             <span>
-              {#if field.options && field.options.length >= 2}
-                {formValues[field.id] ? field.options[0] : field.options[1]}
+              {#if optionsFor(field).length >= 2}
+                {formValues[field.id] ? yesNoLabels(optionsFor(field)).yes : yesNoLabels(optionsFor(field)).no}
               {:else}
                 Centang jika aktif / valid
               {/if}

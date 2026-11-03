@@ -1,5 +1,20 @@
 import type { ColumnMapping, FieldDefinition, QRRecord } from './types';
 
+/** Affirmative cell text in a yes/no column (Indonesian sheets use "Ya"/"Iya"). */
+export const YES_RE = /^(ya|iya|yes|y|benar|true|1|v|✓|centang)$/i;
+
+/**
+ * Split a yes/no column's two cell labels into affirmative and negative. Option ORDER in the sheet
+ * is arbitrary (["Bukan","Ya"] happens), so order alone must never decide "checked".
+ */
+export function yesNoLabels(options: string[] | undefined): { yes?: string; no?: string } {
+  const opts = (options ?? []).filter((o) => o && o.trim());
+  if (opts.length === 0) return {};
+  const yes = opts.find((o) => YES_RE.test(o.trim()));
+  if (!yes) return { yes: opts[0], no: opts[1] };
+  return { yes, no: opts.find((o) => o !== yes) };
+}
+
 /**
  * Generate a unique random ID for records (idempotency key)
  */
@@ -100,11 +115,13 @@ export function getFieldValue(
   // Handle boolean / checkbox fields with custom cell values (e.g. ['Ya', 'Bukan'] or standard boolean)
   if (fieldDef?.type === 'boolean') {
     const isChecked = Boolean(raw === true || raw === 'true' || raw === 'TRUE' || raw === 1 || raw === '1');
-    if (fieldDef.options && fieldDef.options.length >= 2) {
-      return isChecked ? fieldDef.options[0] : fieldDef.options[1];
-    } else if (fieldDef.options && fieldDef.options.length === 1) {
-      return isChecked ? fieldDef.options[0] : '';
+    const opts = fieldDef.options ?? [];
+    if (opts.length >= 2) {
+      // Affirmative label found by text, never by option order (["Bukan","Ya"] is common).
+      const { yes, no } = yesNoLabels(opts);
+      return isChecked ? (yes ?? '') : (no ?? '');
     }
+    if (opts.length === 1) return isChecked ? opts[0] : '';
     return isChecked; // native boolean for Google Sheets checkbox
   }
 

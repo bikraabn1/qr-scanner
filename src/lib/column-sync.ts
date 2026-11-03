@@ -1,7 +1,9 @@
 import { appState } from './store.svelte';
 import { fetchSheetHeaders, fetchSheetValidationRules } from './api';
 import { syncFromRowHeaders } from './sheet-sync';
-import { columnLetterToIndex } from './utils';
+import { columnLetterToIndex, YES_RE } from './utils';
+// One source of truth for "what counts as yes", shared with the submit payload.
+export { YES_RE };
 import type { FieldDefinition } from './types';
 
 /** Shape that matters for the form: a stored field is stale if any of these drift. */
@@ -37,8 +39,6 @@ export async function syncColumnsFromSheet(): Promise<string> {
   const dropdowns = Object.values(rules).filter((r) => r.options?.length).length;
   return `Kolom disinkron dari tab "${sheet}" (${dropdowns} dropdown).`;
 }
-
-export const YES_RE = /^(ya|yes|true|1|v|✓|centang)$/i;
 
 /**
  * A column whose choices live in its own data ("KONTEN INTERNAL TS?" holds Ya/Bukan) has no

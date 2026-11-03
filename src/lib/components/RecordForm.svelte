@@ -1,7 +1,7 @@
 <script lang="ts">
   import { appState } from '../store.svelte';
   import { submitRecord } from '../api';
-  import { generateRecordId } from '../utils';
+  import { generateRecordId, yesNoLabels } from '../utils';
   import type { QRRecord, TestStatus } from '../types';
   import { Send, CheckCircle2, AlertCircle, RefreshCw, XCircle, ClipboardCheck } from '@lucide/svelte';
 
@@ -265,7 +265,7 @@
                 />
                 <span class="text-xs text-zinc-600 dark:text-zinc-400">
                   {#if f.options && f.options.length >= 2}
-                    {customFields[f.id] ? f.options[0] : f.options[1]}
+                    {customFields[f.id] ? yesNoLabels(f.options).yes : yesNoLabels(f.options).no}
                   {:else}
                     Yes / Verified
                   {/if}

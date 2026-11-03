@@ -8,7 +8,8 @@ const STORAGE_KEYS = {
   MAPPINGS: 'qr_book_tester_mappings_v1',
   CURRENT_PAGE: 'qr_book_tester_current_page_v1',
   RECORDS: 'qr_book_tester_records_v1',
-  THEME: 'qr_book_tester_theme_v1',
+  // v2: the old key stored "dark" for everyone; a fresh key makes the readable light theme the default.
+  THEME: 'qr_book_tester_theme_v2',
   AUTH_USER: 'qr_book_tester_auth_user_v1'
 };
 
@@ -76,7 +77,7 @@ export class AppState {
   mappings = $state<ColumnMapping[]>(loadFromStorage(STORAGE_KEYS.MAPPINGS, DEFAULT_MAPPINGS));
   currentPage = $state<number>(loadFromStorage(STORAGE_KEYS.CURRENT_PAGE, 1));
   records = $state<QRRecord[]>(loadFromStorage(STORAGE_KEYS.RECORDS, []));
-  theme = $state<'dark' | 'light'>(loadFromStorage(STORAGE_KEYS.THEME, 'dark'));
+  theme = $state<'dark' | 'light'>(loadFromStorage(STORAGE_KEYS.THEME, 'light'));
 
   // OAuth Google Identity Session (Restored from Cookie if valid)
   user = $state<GoogleUser | null>(null);
