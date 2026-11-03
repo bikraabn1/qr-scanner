@@ -171,6 +171,33 @@ export async function findTargetRow(
 }
 
 /**
+ * Tick checkbox cells. These must be written RAW: with USER_ENTERED Google parses the value as if
+ * typed and the cell ends up holding the text "TRUE" instead of a boolean, so the box never ticks.
+ */
+async function writeCheckboxCells(
+  spreadsheetId: string,
+  sheetName: string,
+  rowNumber: number,
+  columns: string[],
+  token: string
+): Promise<void> {
+  for (const col of columns) {
+    const range = formatA1Range(sheetName, `${col}${rowNumber}`);
+    const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
+    const response = await googleFetch(
+      endpoint,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [[true]] })
+      },
+      token
+    );
+    if (!response.ok) await throwSheetsError(response, spreadsheetId);
+  }
+}
+
+/**
  * Submit record directly to Google Sheets via official REST API v4
  */
 export async function submitRecord(
@@ -196,7 +223,12 @@ export async function submitRecord(
   }
 
   const columnMap = buildRowPayload(record, fields, mappings);
-  if (Object.keys(columnMap).length === 0) {
+
+  // Checkbox cells are handled separately (RAW write) so the sheet gets a real boolean.
+  const checkboxCols = Object.keys(columnMap).filter((c) => columnMap[c] === true);
+  for (const c of checkboxCols) delete columnMap[c];
+
+  if (Object.keys(columnMap).length === 0 && checkboxCols.length === 0) {
     throw new Error('Tidak ada kolom yang aktif atau di-mapping ke Google Sheets.');
   }
 
@@ -250,6 +282,10 @@ export async function submitRecord(
 
       if (!response.ok) await throwSheetsError(response, spreadsheetId);
 
+      if (checkboxCols.length > 0) {
+        await writeCheckboxCells(spreadsheetId, sheetName, targetRow, checkboxCols, token);
+      }
+
       return {
         success: true,
         message: `Tersimpan ke Google Sheets: baris ${targetRow}`,
@@ -263,7 +299,22 @@ export async function submitRecord(
     }
   }
 
-  const rowArray = buildSheetsRowArray(record, fields, mappings);
+  // Built from columnMap (checkboxes already stripped) so no TRUE text lands in the appended row.
+  const maxCol = Object.keys(columnMap).reduce((m, c) => {
+    try {
+      return Math.max(m, columnLetterToIndex(c));
+    } catch {
+      return m;
+    }
+  }, 0);
+  const rowArray: (string | number | boolean)[] = new Array(Math.max(maxCol, 1)).fill('');
+  for (const [colLetter, val] of Object.entries(columnMap)) {
+    try {
+      rowArray[columnLetterToIndex(colLetter) - 1] = val;
+    } catch {
+      // skip invalid column
+    }
+  }
 
   // Use OVERWRITE insertDataOption so preexisting cell validations, conditional formats, and empty row styles aren't shifted/distorted
   const safeRange = formatA1Range(sheetName, 'A:Z');
@@ -292,6 +343,10 @@ export async function submitRecord(
     const updatedRange = data.updates?.updatedRange || '';
     const match = updatedRange.match(/!.*?([0-9]+):/);
     const rowNumber = match ? parseInt(match[1], 10) : undefined;
+
+    if (rowNumber && checkboxCols.length > 0) {
+      await writeCheckboxCells(spreadsheetId, sheetName, rowNumber, checkboxCols, token);
+    }
 
     return {
       success: true,
